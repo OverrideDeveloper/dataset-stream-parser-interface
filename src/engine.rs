@@ -25,15 +25,19 @@ impl<S: RecordSource> DatasetEngine<S> {
         Self { source, loaded: None }
     }
 
-    /// Load lightweight previews into memory for fast repeated searches.
+    /// Prepare lightweight previews in memory for fast repeated searches.
     ///
     /// Only the first three XML child elements of each record are retained.
-    pub fn load(&mut self) -> RecordResult<usize> {
-        self.load_with_progress(|_| {})
+    /// Calling this is optional; get() and list() continue to use the source
+    /// directly when preparation has not been requested.
+    ///
+    /// Only the first three XML child elements of each record are retained.
+    pub fn prep(&mut self) -> RecordResult<usize> {
+        self.prep_with_progress(|_| {})
     }
 
-    /// Load lightweight previews while reporting the number of records loaded.
-    pub fn load_with_progress<F>(&mut self, mut progress: F) -> RecordResult<usize>
+    /// Prepare lightweight previews while reporting the number of records prepared.
+    pub fn prep_with_progress<F>(&mut self, mut progress: F) -> RecordResult<usize>
     where
         F: FnMut(usize),
     {
@@ -51,7 +55,7 @@ impl<S: RecordSource> DatasetEngine<S> {
     }
 
     /// Get one complete record by its zero-based record index.
-    pub fn get(&self, index: u64) -> RecordResult<Option<DatasetRecord>> {
+    /// Without prep(), this retains the original sequential behavior.\n    pub fn get(&self, index: u64) -> RecordResult<Option<DatasetRecord>> {
         let mut stream = self.source.open()?;
 
         while let Some(record) = stream.next_record()? {
@@ -63,7 +67,7 @@ impl<S: RecordSource> DatasetEngine<S> {
         Ok(None)
     }
 
-    /// Find against loaded previews when available; otherwise scan the stream.
+    /// Find against prepared previews when available; otherwise scan the stream.
     pub fn find(&self, query: &str, limit: Option<usize>) -> RecordResult<Vec<u64>> {
         if query.is_empty() {
             return Err(RecordError::InvalidConfiguration(

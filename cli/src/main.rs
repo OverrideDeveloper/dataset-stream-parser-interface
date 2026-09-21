@@ -29,6 +29,7 @@ fn print_record(record: &dataset_stream_parser_interface::DatasetRecord) {
 
 fn print_help() {
     println!("Commands:");
+    println!("  load                  Load lightweight previews into memory for find");
     println!("  find <text> [limit]   Find record indexes containing text");
     println!("  get <index>           Retrieve one record by index");
     println!("  list <start>..<end>   List a half-open range, e.g. list 0..10");
@@ -53,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source_path = path.clone();
     let source_element = record_element.clone();
 
-    let engine = DatasetEngine::new(move || {
+    let mut engine = DatasetEngine::new(move || {
         open_source(&source_path, &source_element)
             .map_err(|error| dataset_stream_parser_interface::RecordError::Io(
                 std::io::Error::other(error.to_string()),
@@ -88,6 +89,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if command == "help" {
             print_help();
+            continue;
+        }
+
+        if command == "load" {
+            println!("Loading first three child elements from each record...");
+            let result = engine.load_with_progress(|count| {
+                if count % 10_000 == 0 {
+                    print!("\rLoaded {count} records...");
+                    let _ = io::stdout().flush();
+                }
+            });
+
+            match result {
+                Ok(count) => {
+                    print!("\rLoaded {count} records.\n");
+                    println!("Search cache ready.");
+                }
+                Err(error) => eprintln!("\nerror: {error:?}"),
+            }
             continue;
         }
 

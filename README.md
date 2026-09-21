@@ -93,6 +93,32 @@ Potential future sources include:
 
 Dataset-specific knowledge belongs above the stream boundary.
 
+## Dataset access engine
+
+The crate now provides a small dataset access layer on top of a re-openable `RecordStream` source:
+
+~~~rust
+use dataset_stream_parser_interface::DatasetEngine;
+
+// The source factory creates a fresh stream for each operation.
+let engine = DatasetEngine::new(|| open_record_stream());
+
+let record = engine.get(42)?;
+let indexes = engine.find("Artificial intelligence", Some(10))?;
+let records = engine.list(Some(0..10))?;
+let all_records = engine.list(None)?;
+~~~
+
+The three operations are deliberately mechanical:
+
+- `get(index)` retrieves one record by zero-based index.
+- `find(query, limit)` returns indexes whose serialized records contain a simple case-sensitive text match.
+- `list(range)` returns records in a Rust half-open range such as `0..10`; `None` means all records.
+
+The engine re-opens the source for each operation. This keeps random-access semantics available even though the underlying parser is streaming. The initial implementation may walk from the beginning of the dataset; indexing or other acceleration can be added later behind the same interface.
+
+`find()` returns indexes rather than records so discovery and retrieval remain separate concerns: find where, then get what.
+
 ## Current scope
 
 The MVP currently provides:

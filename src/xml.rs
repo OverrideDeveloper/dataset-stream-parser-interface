@@ -1,5 +1,5 @@
 use crate::{DatasetRecord, RecordError, RecordResult, RecordStream};
-use quick_xml::events::Event;
+use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 use std::io::BufRead;
 
@@ -27,6 +27,9 @@ impl XmlStreamConfig {
 }
 
 /// Streaming XML record reader.
+///
+/// The reader walks the document until it finds the configured record
+/// element, then materializes only that bounded subtree.
 pub struct XmlRecordStream<R> {
     reader: Reader<R>,
     config: XmlStreamConfig,
@@ -37,10 +40,14 @@ pub struct XmlRecordStream<R> {
 impl<R: BufRead> XmlRecordStream<R> {
     pub fn new(source: R, config: XmlStreamConfig) -> RecordResult<Self> {
         if config.record_element.is_empty() {
-            return Err(RecordError::InvalidConfiguration("record_element cannot be empty".into()));
+            return Err(RecordError::InvalidConfiguration(
+                "record_element cannot be empty".into(),
+            ));
         }
         if config.max_record_bytes == 0 {
-            return Err(RecordError::InvalidConfiguration("max_record_bytes must be greater than zero".into()));
+            return Err(RecordError::InvalidConfiguration(
+                "max_record_bytes must be greater than zero".into(),
+            ));
         }
 
         let mut reader = Reader::from_reader(source);
@@ -54,23 +61,55 @@ impl<R: BufRead> XmlRecordStream<R> {
         })
     }
 
-    fn collect_record(&mut self, start: quick_xml::events::BytesStart<'_>) -> RecordResult<Vec<u8>> {
-        let mut record = Vec::new();
-        record.extend_from_slice(start.as_ref());
+    fn append_event(record: &mut Vec<u8>, event: &Event<'_>, max: usize) -> RecordResult<()> {
+        record.extend_from_slice(event.as_ref());
 
-        self.reader.read_to_end_into(start.name(), &mut self.buffer)?;
-
-        record.extend_from_slice(&self.buffer);
-
-        if record.len() > self.config.max_record_bytes {
+        if record.len() > max {
             return Err(RecordError::InvalidConfiguration(format!(
-                "record {} exceeded max_record_bytes ({})",
-                self.record_index, self.config.max_record_bytes
+                "record exceeded max_record_bytes ({max})"
             )));
         }
 
-        self.buffer.clear();
-        Ok(record)
+        Ok(())
+    }
+
+    fn collect_record(&mut self, start: BytesStart<'static>) -> RecordResult<Vec<u8>> {
+        let mut record = Vec::new();
+        let max = self.config.max_record_bytes;
+        let mut depth = 1usize;
+
+        Self::append_event(&mut record, &Event::Start(start), max)?;
+
+        loop {
+            self.buffer.clear();
+
+            let event = self.reader.read_event_into(&mut self.buffer)?;
+
+            match event {
+                Event::Start(_) => {
+                    depth += 1;
+                    Self::append_event(&mut record, &event, max)?;
+                }
+                Event::Empty(_) => {
+                    Self::append_event(&mut record, &event, max)?;
+                }
+                Event::End(_) => {
+                    Self::append_event(&mut record, &event, max)?;
+                    depth -= 1;
+                    if depth == 0 {
+                        return Ok(record);
+                    }
+                }
+                Event::Eof => {
+                    return Err(RecordError::InvalidConfiguration(
+                        "unexpected end of input inside record".into(),
+                    ));
+                }
+                _ => {
+                    Self::append_event(&mut record, &event, max)?;
+                }
+            }
+        }
     }
 }
 
@@ -79,11 +118,13 @@ impl<R: BufRead> RecordStream for XmlRecordStream<R> {
         loop {
             self.buffer.clear();
 
-            match self.reader.read_event_into(&mut self.buffer)? {
+            let event = self.reader.read_event_into(&mut self.buffer)?;
+
+            match event {
                 Event::Start(start)
                     if start.name().as_ref() == self.config.record_element.as_slice() =>
                 {
-                    let bytes = self.collect_record(start)?;
+                    let bytes = self.collect_record(start.into_owned())?;
                     let record = DatasetRecord::new(self.record_index, bytes);
                     self.record_index += 1;
                     return Ok(Some(record));

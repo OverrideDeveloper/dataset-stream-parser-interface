@@ -30,8 +30,6 @@ impl<S: RecordSource> DatasetEngine<S> {
     /// Only the first three XML child elements of each record are retained.
     /// Calling this is optional; get() and list() continue to use the source
     /// directly when preparation has not been requested.
-    ///
-    /// Only the first three XML child elements of each record are retained.
     pub fn prep(&mut self) -> RecordResult<usize> {
         self.prep_with_progress(|_| {})
     }
@@ -55,7 +53,8 @@ impl<S: RecordSource> DatasetEngine<S> {
     }
 
     /// Get one complete record by its zero-based record index.
-    /// Without prep(), this retains the original sequential behavior.\n    pub fn get(&self, index: u64) -> RecordResult<Option<DatasetRecord>> {
+    /// Without prep(), this retains the original sequential behavior.
+    pub fn get(&self, index: u64) -> RecordResult<Option<DatasetRecord>> {
         let mut stream = self.source.open()?;
 
         while let Some(record) = stream.next_record()? {

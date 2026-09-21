@@ -20,7 +20,7 @@ impl DatasetRecord {
     pub fn is_empty(&self) -> bool { self.bytes.is_empty() }
     pub fn as_bytes(&self) -> &[u8] { &self.bytes }
 
-    /// Build a lightweight XML preview containing the first three child elements.
+    /// Build a lightweight XML preview containing the record start and first three child elements.
     pub(crate) fn preview(&self) -> RecordResult<LoadedRecord> {
         let mut reader = Reader::from_reader(self.bytes.as_slice());
         reader.config_mut().trim_text(false);
@@ -33,7 +33,9 @@ impl DatasetRecord {
         loop {
             buffer.clear();
             match reader.read_event_into(&mut buffer)? {
-                Event::Start(_) if !root_seen => {
+                Event::Start(event) if !root_seen => {
+                    let mut writer = Writer::new(&mut preview);
+                    writer.write_event(Event::Start(event.into_owned()))?;
                     root_seen = true;
                 }
                 Event::Start(_) if root_seen && child_count < 3 => {

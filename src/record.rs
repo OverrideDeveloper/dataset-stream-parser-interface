@@ -1,7 +1,9 @@
+use quick_xml::events::Event;
+use quick_xml::reader::Reader;
+use quick_xml::writer::Writer;
 use serde::de::DeserializeOwned;
 use std::fmt;
 
-/// A bounded record extracted from a dataset stream.
 #[derive(Debug, Clone)]
 pub struct DatasetRecord {
     index: u64,
@@ -13,25 +15,96 @@ impl DatasetRecord {
         Self { index, bytes }
     }
 
-    /// Zero-based position of this record in the stream.
     pub fn index(&self) -> u64 { self.index }
-
-    /// Size of this record in bytes.
     pub fn len(&self) -> usize { self.bytes.len() }
-
-    /// Whether the record contains no bytes.
     pub fn is_empty(&self) -> bool { self.bytes.is_empty() }
-
-    /// Access the serialized record without copying it.
     pub fn as_bytes(&self) -> &[u8] { &self.bytes }
 
-    /// Decode this bounded record into an application-owned type.
+    /// Build a lightweight XML preview containing the first three child elements.
+    pub(crate) fn preview(&self) -> RecordResult<LoadedRecord> {
+        let mut reader = Reader::from_reader(self.bytes.as_slice());
+        reader.config_mut().trim_text(false);
+
+        let mut buffer = Vec::new();
+        let mut preview = Vec::new();
+        let mut root_seen = false;
+        let mut child_count = 0usize;
+
+        loop {
+            buffer.clear();
+            match reader.read_event_into(&mut buffer)? {
+                Event::Start(_) if !root_seen => {
+                    root_seen = true;
+                }
+                Event::Start(_) if root_seen && child_count < 3 => {
+                    let mut depth = 1usize;
+                    let mut writer = Writer::new(&mut preview);
+
+                    loop {
+                        buffer.clear();
+                        let event = reader.read_event_into(&mut buffer)?;
+                        match event {
+                            Event::Start(_) => {
+                                depth += 1;
+                                writer.write_event(event)?;
+                            }
+                            Event::End(_) => {
+                                writer.write_event(event)?;
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            Event::Eof => {
+                                return Err(RecordError::InvalidConfiguration(
+                                    "unexpected end of input while building record preview".into(),
+                                ));
+                            }
+                            _ => writer.write_event(event)?,
+                        }
+                    }
+
+                    child_count += 1;
+                }
+                Event::Empty(event) if root_seen && child_count < 3 => {
+                    let mut writer = Writer::new(&mut preview);
+                    writer.write_event(Event::Empty(event.into_owned()))?;
+                    child_count += 1;
+                }
+                Event::Eof => break,
+                _ => {}
+            }
+
+            if child_count == 3 {
+                break;
+            }
+        }
+
+        Ok(LoadedRecord::new(self.index, preview))
+    }
+
     pub fn decode<T: DeserializeOwned>(&self) -> RecordResult<T> {
         quick_xml::de::from_reader(self.bytes.as_slice()).map_err(RecordError::decode)
     }
 }
 
-/// Optional schema-specific decoder for callers that want a reusable transformation.
+#[derive(Debug, Clone)]
+pub struct LoadedRecord {
+    index: u64,
+    content: Vec<u8>,
+}
+
+impl LoadedRecord {
+    fn new(index: u64, content: Vec<u8>) -> Self {
+        Self { index, content }
+    }
+
+    pub fn index(&self) -> u64 { self.index }
+    pub fn as_bytes(&self) -> &[u8] { &self.content }
+    pub fn len(&self) -> usize { self.content.len() }
+    pub fn is_empty(&self) -> bool { self.content.is_empty() }
+}
+
 pub trait RecordDecoder<T> {
     fn decode(&self, record: &DatasetRecord) -> RecordResult<T>;
 }

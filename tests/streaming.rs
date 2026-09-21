@@ -45,8 +45,8 @@ fn enforces_record_size_limit() {
 fn dataset_engine_gets_a_record_by_index() {
     use dataset_stream_parser_interface::{DatasetEngine, RecordResult};
 
-    let xml = br#"<pages><page><title>First</title></page><page><title>Second</title></page></pages>"#;
-    let engine = DatasetEngine::new(|| -> RecordResult<Box<dyn RecordStream>> {
+    let xml = br#"<pages><page><title>First</title></page><page><title>Second</title></page></pages>"#.to_vec();
+    let engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
         Ok(Box::new(XmlRecordStream::new(
             Cursor::new(xml),
             XmlStreamConfig::new("page"),
@@ -63,8 +63,8 @@ fn dataset_engine_gets_a_record_by_index() {
 fn dataset_engine_finds_record_indexes() {
     use dataset_stream_parser_interface::{DatasetEngine, RecordResult};
 
-    let xml = br#"<pages><page><title>First</title></page><page><title>Second</title></page><page><title>First Again</title></page></pages>"#;
-    let engine = DatasetEngine::new(|| -> RecordResult<Box<dyn RecordStream>> {
+    let xml = br#"<pages><page><title>First</title></page><page><title>Second</title></page><page><title>First Again</title></page></pages>"#.to_vec();
+    let engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
         Ok(Box::new(XmlRecordStream::new(
             Cursor::new(xml),
             XmlStreamConfig::new("page"),
@@ -80,8 +80,8 @@ fn dataset_engine_finds_record_indexes() {
 fn dataset_engine_lists_a_range_or_all_records() {
     use dataset_stream_parser_interface::{DatasetEngine, RecordResult};
 
-    let xml = br#"<pages><page><title>First</title></page><page><title>Second</title></page><page><title>Third</title></page></pages>"#;
-    let engine = DatasetEngine::new(|| -> RecordResult<Box<dyn RecordStream>> {
+    let xml = br#"<pages><page><title>First</title></page><page><title>Second</title></page><page><title>Third</title></page></pages>"#.to_vec();
+    let engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
         Ok(Box::new(XmlRecordStream::new(
             Cursor::new(xml),
             XmlStreamConfig::new("page"),

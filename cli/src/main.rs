@@ -1,0 +1,152 @@
+use bzip2::bufread::MultiBzDecoder;
+use dataset_stream_parser_interface::{
+    DatasetEngine, RecordStream, XmlRecordStream, XmlStreamConfig,
+};
+use std::fs::File;
+use std::io::{self, BufRead, BufReader, Write};
+
+fn open_source(
+    path: &str,
+    record_element: &str,
+) -> Result<Box<dyn RecordStream>, Box<dyn std::error::Error>> {
+    let file = File::open(path)?;
+    let input: Box<dyn BufRead> = if path.to_ascii_lowercase().ends_with(".bz2") {
+        Box::new(BufReader::new(MultiBzDecoder::new(BufReader::new(file))))
+    } else {
+        Box::new(BufReader::new(file))
+    };
+
+    Ok(Box::new(XmlRecordStream::new(
+        input,
+        XmlStreamConfig::new(record_element.to_string()),
+    )?))
+}
+
+fn print_record(record: &dataset_stream_parser_interface::DatasetRecord) {
+    println!("#{}:", record.index());
+    println!("{}", String::from_utf8_lossy(record.as_bytes()));
+}
+
+fn print_help() {
+    println!("Commands:");
+    println!("  find <text> [limit]   Find record indexes containing text");
+    println!("  get <index>           Retrieve one record by index");
+    println!("  list <start>..<end>   List a half-open range, e.g. list 0..10");
+    println!("  list *                List every record (use with care)");
+    println!("  help                  Show this help");
+    println!("  quit                  Exit");
+}
+
+fn parse_range(value: &str) -> Option<std::ops::Range<u64>> {
+    let (start, end) = value.split_once("..")?;
+    Some(start.parse().ok()?..end.parse().ok()?)
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = std::env::args();
+    let program = args.next().unwrap_or_else(|| "dataset-stream-parser-cli".into());
+    let path = args.next().ok_or_else(|| {
+        format!("usage: {program} <dataset.xml|dataset.xml.bz2> [record-element]")
+    })?;
+    let record_element = args.next().unwrap_or_else(|| "page".into());
+
+    let source_path = path.clone();
+    let source_element = record_element.clone();
+
+    let engine = DatasetEngine::new(move || {
+        open_source(&source_path, &source_element)
+            .map_err(|error| dataset_stream_parser_interface::RecordError::Io(
+                std::io::Error::other(error.to_string()),
+            ))
+    });
+
+    println!("Dataset CLI");
+    println!("  dataset: {path}");
+    println!("  record:  <{record_element}>");
+    println!("Type 'help' for commands.");
+
+    let stdin = io::stdin();
+    let mut input = String::new();
+
+    loop {
+        print!("> ");
+        io::stdout().flush()?;
+        input.clear();
+
+        if stdin.read_line(&mut input)? == 0 {
+            break;
+        }
+
+        let command = input.trim();
+        if command.is_empty() {
+            continue;
+        }
+
+        if command == "quit" || command == "exit" {
+            break;
+        }
+
+        if command == "help" {
+            print_help();
+            continue;
+        }
+
+        if let Some(rest) = command.strip_prefix("find ") {
+            let mut parts = rest.trim().splitn(2, ' ');
+            let query = parts.next().unwrap_or_default().trim_matches('"');
+            let limit = parts.next().and_then(|value| value.parse::<usize>().ok());
+
+            match engine.find(query, limit) {
+                Ok(matches) => println!("{matches:?}"),
+                Err(error) => eprintln!("error: {error:?}"),
+            }
+            continue;
+        }
+
+        if let Some(rest) = command.strip_prefix("get ") {
+            match rest.trim().parse::<u64>() {
+                Ok(index) => match engine.get(index) {
+                    Ok(Some(record)) => print_record(&record),
+                    Ok(None) => println!("record #{index} not found"),
+                    Err(error) => eprintln!("error: {error:?}"),
+                },
+                Err(_) => eprintln!("usage: get <index>"),
+            }
+            continue;
+        }
+
+        if let Some(rest) = command.strip_prefix("list ") {
+            let value = rest.trim();
+
+            if value == "*" {
+                println!("Listing all records; this materializes the entire result set.");
+                match engine.list(None) {
+                    Ok(records) => {
+                        for record in &records {
+                            print_record(record);
+                        }
+                    }
+                    Err(error) => eprintln!("error: {error:?}"),
+                }
+                continue;
+            }
+
+            match parse_range(value) {
+                Some(range) => match engine.list(Some(range)) {
+                    Ok(records) => {
+                        for record in &records {
+                            print_record(record);
+                        }
+                    }
+                    Err(error) => eprintln!("error: {error:?}"),
+                },
+                None => eprintln!("usage: list <start>..<end> or list *"),
+            }
+            continue;
+        }
+
+        eprintln!("unknown command; type 'help'");
+    }
+
+    Ok(())
+}

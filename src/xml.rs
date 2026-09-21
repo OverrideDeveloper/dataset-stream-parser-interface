@@ -118,19 +118,25 @@ impl<R: BufRead> RecordStream for XmlRecordStream<R> {
         loop {
             self.buffer.clear();
 
-            let event = self.reader.read_event_into(&mut self.buffer)?;
+            let start = {
+                let event = self.reader.read_event_into(&mut self.buffer)?;
 
-            match event {
-                Event::Start(start)
-                    if start.name().as_ref() == self.config.record_element.as_slice() =>
-                {
-                    let bytes = self.collect_record(start.into_owned())?;
-                    let record = DatasetRecord::new(self.record_index, bytes);
-                    self.record_index += 1;
-                    return Ok(Some(record));
+                match event {
+                    Event::Start(start)
+                        if start.name().as_ref() == self.config.record_element.as_slice() =>
+                    {
+                        Some(start.into_owned())
+                    }
+                    Event::Eof => return Ok(None),
+                    _ => None,
                 }
-                Event::Eof => return Ok(None),
-                _ => {}
+            };
+
+            if let Some(start) = start {
+                let bytes = self.collect_record(start)?;
+                let record = DatasetRecord::new(self.record_index, bytes);
+                self.record_index += 1;
+                return Ok(Some(record));
             }
         }
     }

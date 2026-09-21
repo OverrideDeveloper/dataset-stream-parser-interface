@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let file = File::open(&path)?;
     let input: Box<dyn BufRead> = if path.to_ascii_lowercase().ends_with(".bz2") {
-        Box::new(MultiBzDecoder::new(BufReader::new(file)))
+        Box::new(BufReader::new(MultiBzDecoder::new(BufReader::new(file))))
     } else {
         Box::new(BufReader::new(file))
     };

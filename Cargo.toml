@@ -1,0 +1,10 @@
+[package]
+name = "dataset-stream-parser-interface"
+version = "0.1.0"
+edition = "2021"
+description = "A Rust dataset parser that streams bounded records through a machine-facing API."
+license = "MIT"
+
+[dependencies]
+quick-xml = { version = "0.38", features = ["serialize"] }
+serde = { version = "1", features = ["derive"] }

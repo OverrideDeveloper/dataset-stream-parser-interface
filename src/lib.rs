@@ -9,7 +9,7 @@ mod record;
 pub mod xml;
 
 pub use engine::{DatasetEngine, RecordSource};
-pub use record::{DatasetRecord, RecordDecoder, RecordError, RecordResult};
+pub use record::{DatasetRecord, LoadedRecord, RecordDecoder, RecordError, RecordResult};
 pub use xml::{XmlRecordStream, XmlStreamConfig};
 
 /// A source of bounded dataset records.

@@ -1,9 +1,6 @@
-use crate::{DatasetRecord, RecordResult, RecordStream};
+use crate::{DatasetRecord, LoadedRecord, RecordError, RecordResult, RecordStream};
 
 /// Re-openable source of dataset record streams.
-///
-/// Dataset operations may need to start from the beginning of a dataset.
-/// A factory keeps that lifecycle concern outside the record-stream abstraction.
 pub trait RecordSource {
     fn open(&self) -> RecordResult<Box<dyn RecordStream>>;
 }
@@ -18,27 +15,42 @@ where
 }
 
 /// Dataset access operations built on top of a re-openable record source.
-///
-/// The engine deliberately exposes mechanical operations rather than semantic
-/// search behavior:
-///
-/// - `get` retrieves one record by zero-based index;
-/// - `find` returns record indexes whose serialized records contain a text match;
-/// - `list` enumerates records in a range, or all records when no range is given.
 pub struct DatasetEngine<S> {
     source: S,
+    loaded: Option<Vec<LoadedRecord>>,
 }
 
 impl<S: RecordSource> DatasetEngine<S> {
     pub fn new(source: S) -> Self {
-        Self { source }
+        Self { source, loaded: None }
     }
 
-    /// Get one record by its zero-based record index.
+    /// Load lightweight previews into memory for fast repeated searches.
     ///
-    /// This operation opens a fresh stream and walks forward until the requested
-    /// index is reached. Random-access indexing can be added behind this API later
-    /// without changing its caller-facing contract.
+    /// Only the first three XML child elements of each record are retained.
+    pub fn load(&mut self) -> RecordResult<usize> {
+        self.load_with_progress(|_| {})
+    }
+
+    /// Load lightweight previews while reporting the number of records loaded.
+    pub fn load_with_progress<F>(&mut self, mut progress: F) -> RecordResult<usize>
+    where
+        F: FnMut(usize),
+    {
+        let mut stream = self.source.open()?;
+        let mut loaded = Vec::new();
+
+        while let Some(record) = stream.next_record()? {
+            loaded.push(record.preview()?);
+            progress(loaded.len());
+        }
+
+        let count = loaded.len();
+        self.loaded = Some(loaded);
+        Ok(count)
+    }
+
+    /// Get one complete record by its zero-based record index.
     pub fn get(&self, index: u64) -> RecordResult<Option<DatasetRecord>> {
         let mut stream = self.source.open()?;
 
@@ -51,25 +63,35 @@ impl<S: RecordSource> DatasetEngine<S> {
         Ok(None)
     }
 
-    /// Find record indexes whose serialized bytes contain `query`.
-    ///
-    /// Matching is intentionally simple and case-sensitive. An optional limit
-    /// stops the scan after the requested number of matches.
+    /// Find against loaded previews when available; otherwise scan the stream.
     pub fn find(&self, query: &str, limit: Option<usize>) -> RecordResult<Vec<u64>> {
         if query.is_empty() {
-            return Err(crate::RecordError::InvalidConfiguration(
+            return Err(RecordError::InvalidConfiguration(
                 "find query cannot be empty".into(),
             ));
         }
 
         let needle = query.as_bytes();
-        let mut stream = self.source.open()?;
         let mut matches = Vec::new();
 
+        if let Some(loaded) = &self.loaded {
+            for record in loaded {
+                if record.as_bytes().windows(needle.len()).any(|window| window == needle) {
+                    matches.push(record.index());
+                    if let Some(limit) = limit {
+                        if matches.len() >= limit {
+                            break;
+                        }
+                    }
+                }
+            }
+            return Ok(matches);
+        }
+
+        let mut stream = self.source.open()?;
         while let Some(record) = stream.next_record()? {
             if record.as_bytes().windows(needle.len()).any(|window| window == needle) {
                 matches.push(record.index());
-
                 if let Some(limit) = limit {
                     if matches.len() >= limit {
                         break;
@@ -81,10 +103,7 @@ impl<S: RecordSource> DatasetEngine<S> {
         Ok(matches)
     }
 
-    /// List records in `range`, or all records when `range` is `None`.
-    ///
-    /// Ranges follow normal Rust half-open semantics, so `0..10` returns
-    /// records 0 through 9.
+    /// List complete records in range, or all records when range is None.
     pub fn list(&self, range: Option<std::ops::Range<u64>>) -> RecordResult<Vec<DatasetRecord>> {
         let mut stream = self.source.open()?;
         let (start, end) = match range {

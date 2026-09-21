@@ -63,7 +63,7 @@ impl<R: BufRead> XmlRecordStream<R> {
     }
 
     fn append_event(record: &mut Vec<u8>, event: Event<'_>, max: usize) -> RecordResult<()> {
-        Writer::new(record).write_event(event)?;
+        Writer::new(&mut *record).write_event(event)?;
 
         if record.len() > max {
             return Err(RecordError::InvalidConfiguration(format!(

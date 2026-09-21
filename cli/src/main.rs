@@ -29,7 +29,7 @@ fn print_record(record: &dataset_stream_parser_interface::DatasetRecord) {
 
 fn print_help() {
     println!("Commands:");
-    println!("  load                  Load lightweight previews into memory for find");
+    println!("  prep                  Prepare lightweight previews for find");
     println!("  find <text> [limit]   Find record indexes containing text");
     println!("  get <index>           Retrieve one record by index");
     println!("  list <start>..<end>   List a half-open range, e.g. list 0..10");
@@ -92,18 +92,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        if command == "load" {
-            println!("Loading first three child elements from each record...");
-            let result = engine.load_with_progress(|count| {
+        if command == "prep" {
+            println!("Preparing first three child elements from each record...");
+            let result = engine.prep_with_progress(|count| {
                 if count % 10_000 == 0 {
-                    print!("\rLoaded {count} records...");
+                    print!("\rPrepared {count} records...");
                     let _ = io::stdout().flush();
                 }
             });
 
             match result {
                 Ok(count) => {
-                    print!("\rLoaded {count} records.\n");
+                    print!("\rPrepared {count} records.\n");
                     println!("Search cache ready.");
                 }
                 Err(error) => eprintln!("\nerror: {error:?}"),

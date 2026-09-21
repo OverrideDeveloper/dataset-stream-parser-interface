@@ -1,5 +1,6 @@
 use crate::{DatasetRecord, RecordError, RecordResult, RecordStream};
 use quick_xml::events::{BytesStart, Event};
+use quick_xml::writer::Writer;
 use quick_xml::Reader;
 use std::io::BufRead;
 
@@ -61,8 +62,8 @@ impl<R: BufRead> XmlRecordStream<R> {
         })
     }
 
-    fn append_event(record: &mut Vec<u8>, event: &Event<'_>, max: usize) -> RecordResult<()> {
-        event.write_to(record)?;
+    fn append_event(record: &mut Vec<u8>, event: Event<'_>, max: usize) -> RecordResult<()> {
+        Writer::new(record).write_event(event)?;
 
         if record.len() > max {
             return Err(RecordError::InvalidConfiguration(format!(
@@ -78,7 +79,7 @@ impl<R: BufRead> XmlRecordStream<R> {
         let max = self.config.max_record_bytes;
         let mut depth = 1usize;
 
-        Self::append_event(&mut record, &Event::Start(start), max)?;
+        Self::append_event(&mut record, Event::Start(start), max)?;
 
         loop {
             self.buffer.clear();
@@ -88,13 +89,13 @@ impl<R: BufRead> XmlRecordStream<R> {
             match event {
                 Event::Start(_) => {
                     depth += 1;
-                    Self::append_event(&mut record, &event, max)?;
+                    Self::append_event(&mut record, event, max)?;
                 }
                 Event::Empty(_) => {
-                    Self::append_event(&mut record, &event, max)?;
+                    Self::append_event(&mut record, event, max)?;
                 }
                 Event::End(_) => {
-                    Self::append_event(&mut record, &event, max)?;
+                    Self::append_event(&mut record, event, max)?;
                     depth -= 1;
                     if depth == 0 {
                         return Ok(record);
@@ -106,7 +107,7 @@ impl<R: BufRead> XmlRecordStream<R> {
                     ));
                 }
                 _ => {
-                    Self::append_event(&mut record, &event, max)?;
+                    Self::append_event(&mut record, event, max)?;
                 }
             }
         }

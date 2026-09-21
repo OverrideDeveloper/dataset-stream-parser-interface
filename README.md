@@ -109,13 +109,16 @@ let records = engine.list(Some(0..10))?;
 let all_records = engine.list(None)?;
 ~~~
 
-The three operations are deliberately mechanical:
+The operations are deliberately mechanical:
 
 - `get(index)` retrieves one record by zero-based index.
 - `find(query, limit)` returns indexes whose serialized records contain a simple case-sensitive text match.
 - `list(range)` returns records in a Rust half-open range such as `0..10`; `None` means all records.
+- `prep()` optionally prepares lightweight previews for repeated `find()` calls.
 
-The engine re-opens the source for each operation. This keeps random-access semantics available even though the underlying parser is streaming. The initial implementation may walk from the beginning of the dataset; indexing or other acceleration can be added later behind the same interface.
+`prep()` is an explicit preparation step rather than a requirement for dataset access. Without it, `get()`, `find()`, and `list()` continue to operate directly against the re-openable stream. When preparation is requested, only the first three XML child elements of each record are retained for the in-memory search cache.
+
+The engine re-opens the source for each direct operation. The initial implementation may walk from the beginning of the dataset; checkpointed retrieval is a later optimization that can be added behind the same interface.
 
 `find()` returns indexes rather than records so discovery and retrieval remain separate concerns: find where, then get what.
 
@@ -131,6 +134,7 @@ The MVP currently provides:
 - generic Serde decoding
 - example CLI program
 - bzip2 multistream input for compressed datasets
+- lightweight search preparation
 - unit tests for streaming and bounds
 
 Not yet included:
@@ -138,7 +142,7 @@ Not yet included:
 - Wikipedia-specific schema
 - compressed-input adapters beyond bzip2 multistream input
 - random access
-- indexing
+- checkpointed retrieval
 - database storage
 - semantic search
 - network service

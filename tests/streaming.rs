@@ -40,7 +40,6 @@ fn enforces_record_size_limit() {
     assert!(stream.next_record().is_err());
 }
 
-
 #[test]
 fn dataset_engine_gets_a_record_by_index() {
     use dataset_stream_parser_interface::{DatasetEngine, RecordResult};
@@ -93,4 +92,22 @@ fn dataset_engine_lists_a_range_or_all_records() {
 
     let all = engine.list(None).unwrap();
     assert_eq!(all.iter().map(|record| record.index()).collect::<Vec<_>>(), vec![0, 1, 2]);
+}
+
+#[test]
+fn dataset_engine_loads_first_three_child_elements_for_find() {
+    use dataset_stream_parser_interface::{DatasetEngine, RecordResult};
+
+    let xml = br#"<books><book id="bk112"><author>Galos, Mike</author><title>Visual Studio 7</title><genre>Computer</genre><price>49.95</price></book><book id="bk113"><author>Another Author</author><title>Rust</title><genre>Computer</genre><price>39.95</price></book></books>"#.to_vec();
+    let mut engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
+        Ok(Box::new(XmlRecordStream::new(
+            Cursor::new(xml.clone()),
+            XmlStreamConfig::new("book"),
+        )?))
+    });
+
+    assert_eq!(engine.load().unwrap(), 2);
+    assert_eq!(engine.find("Visual Studio 7", None).unwrap(), vec![0]);
+    assert_eq!(engine.find("49.95", None).unwrap(), Vec::<u64>::new());
+    assert_eq!(engine.find("Another Author", None).unwrap(), vec![1]);
 }

@@ -33,7 +33,7 @@ fn rejects_empty_record_name() {
 fn enforces_record_size_limit() {
     let xml = br#"<root><page><title>oversized</title></page></root>"#;
     let mut stream = XmlRecordStream::new(
-        Cursor::new(xml),
+        Cursor::new(xml.clone()),
         XmlStreamConfig::new("page").with_max_record_bytes(4),
     ).unwrap();
 
@@ -48,7 +48,7 @@ fn dataset_engine_gets_a_record_by_index() {
     let xml = br#"<pages><page><title>First</title></page><page><title>Second</title></page></pages>"#.to_vec();
     let engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
         Ok(Box::new(XmlRecordStream::new(
-            Cursor::new(xml),
+            Cursor::new(xml.clone()),
             XmlStreamConfig::new("page"),
         )?))
     });
@@ -66,7 +66,7 @@ fn dataset_engine_finds_record_indexes() {
     let xml = br#"<pages><page><title>First</title></page><page><title>Second</title></page><page><title>First Again</title></page></pages>"#.to_vec();
     let engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
         Ok(Box::new(XmlRecordStream::new(
-            Cursor::new(xml),
+            Cursor::new(xml.clone()),
             XmlStreamConfig::new("page"),
         )?))
     });
@@ -83,7 +83,7 @@ fn dataset_engine_lists_a_range_or_all_records() {
     let xml = br#"<pages><page><title>First</title></page><page><title>Second</title></page><page><title>Third</title></page></pages>"#.to_vec();
     let engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
         Ok(Box::new(XmlRecordStream::new(
-            Cursor::new(xml),
+            Cursor::new(xml.clone()),
             XmlStreamConfig::new("page"),
         )?))
     });

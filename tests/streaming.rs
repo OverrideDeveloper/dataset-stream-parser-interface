@@ -10,7 +10,7 @@ struct Page {
 #[test]
 fn streams_one_record_at_a_time() {
     let xml = br#"<pages><page><title>First</title></page><page><title>Second</title></page></pages>"#;
-    let mut stream = XmlRecordStream::new(Cursor::new(xml), XmlStreamConfig::new("page")).unwrap();
+    let mut stream = XmlRecordStream::new(Cursor::new(xml.clone()), XmlStreamConfig::new("page")).unwrap();
 
     let first = stream.next_record().unwrap().unwrap();
     assert_eq!(first.index(), 0);

@@ -95,7 +95,7 @@ fn dataset_engine_lists_a_range_or_all_records() {
 }
 
 #[test]
-fn dataset_engine_loads_first_three_child_elements_for_find() {
+fn dataset_engine_prepares_first_three_child_elements_for_find() {
     use dataset_stream_parser_interface::{DatasetEngine, RecordResult};
 
     let xml = br#"<books><book id="bk112"><author>Galos, Mike</author><title>Visual Studio 7</title><genre>Computer</genre><price>49.95</price></book><book id="bk113"><author>Another Author</author><title>Rust</title><genre>Computer</genre><price>39.95</price></book></books>"#.to_vec();
@@ -106,9 +106,24 @@ fn dataset_engine_loads_first_three_child_elements_for_find() {
         )?))
     });
 
-    assert_eq!(engine.load().unwrap(), 2);
+    assert_eq!(engine.prep().unwrap(), 2);
     assert_eq!(engine.find("bk112", None).unwrap(), vec![0]);
     assert_eq!(engine.find("Visual Studio 7", None).unwrap(), vec![0]);
     assert_eq!(engine.find("49.95", None).unwrap(), Vec::<u64>::new());
     assert_eq!(engine.find("Another Author", None).unwrap(), vec![1]);
+}
+#[test]
+fn get_still_uses_the_stream_when_not_prepared() {
+    use dataset_stream_parser_interface::{DatasetEngine, RecordResult};
+
+    let xml = br#"<pages><page><title>First</title></page><page><title>Second</title></page>"#.to_vec();
+    let engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
+        Ok(Box::new(XmlRecordStream::new(
+            Cursor::new(xml.clone()),
+            XmlStreamConfig::new("page"),
+        )?))
+    });
+
+    let record = engine.get(1).unwrap().unwrap();
+    assert_eq!(record.decode::<Page>().unwrap().title.as_deref(), Some("Second"));
 }

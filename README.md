@@ -104,12 +104,13 @@ The MVP currently provides:
 - record indexing
 - generic Serde decoding
 - example CLI program
+- bzip2 multistream input for compressed datasets
 - unit tests for streaming and bounds
 
 Not yet included:
 
 - Wikipedia-specific schema
-- compressed-input adapters
+- compressed-input adapters beyond bzip2 multistream input
 - random access
 - indexing
 - database storage
@@ -124,11 +125,14 @@ MIT. See LICENSE.
 
 ## Validation
 
+The example accepts an optional record-element argument (default: `page`). Files ending in `.bz2` are decoded with `MultiBzDecoder`, which supports the bzip2 multistream format used by Wikipedia dumps. The XML parser itself remains compression-agnostic.
+
 The intended validation commands are:
 
 ~~~text
 cargo test
-cargo run --example stream_xml -- path/to/dataset.xml
+cargo run --example stream_xml -- path/to/dataset.xml [record-element]
+cargo run --example stream_xml -- path/to/dataset.xml.bz2 [record-element]
 ~~~
 
 cargo test should be run before treating the implementation as validated.

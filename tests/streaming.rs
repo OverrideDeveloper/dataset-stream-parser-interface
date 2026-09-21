@@ -107,6 +107,7 @@ fn dataset_engine_loads_first_three_child_elements_for_find() {
     });
 
     assert_eq!(engine.load().unwrap(), 2);
+    assert_eq!(engine.find("bk112", None).unwrap(), vec![0]);
     assert_eq!(engine.find("Visual Studio 7", None).unwrap(), vec![0]);
     assert_eq!(engine.find("49.95", None).unwrap(), Vec::<u64>::new());
     assert_eq!(engine.find("Another Author", None).unwrap(), vec![1]);

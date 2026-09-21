@@ -4,9 +4,11 @@
 //! a source is streamed, a meaningful record boundary is recognized, and one
 //! bounded record is exposed to the caller at a time.
 
+mod engine;
 mod record;
 pub mod xml;
 
+pub use engine::{DatasetEngine, RecordSource};
 pub use record::{DatasetRecord, RecordDecoder, RecordError, RecordResult};
 pub use xml::{XmlRecordStream, XmlStreamConfig};
 

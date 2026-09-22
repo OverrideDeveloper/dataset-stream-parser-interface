@@ -1,4 +1,4 @@
-use crate::{DatasetRecord, LoadedRecord, RecordError, RecordResult, RecordStream};
+use crate::{DatasetRecord, LoadedRecord, PreviewConfig, RecordError, RecordResult, RecordStream};
 
 /// Re-openable source of dataset record streams.
 pub trait RecordSource {
@@ -35,6 +35,7 @@ pub struct DatasetEngine<S> {
     loaded: Option<Vec<LoadedRecord>>,
     checkpoints: Vec<Checkpoint>,
     checkpoint_interval: u64,
+    preview_config: PreviewConfig,
 }
 
 impl<S: RecordSource> DatasetEngine<S> {
@@ -44,6 +45,7 @@ impl<S: RecordSource> DatasetEngine<S> {
             loaded: None,
             checkpoints: Vec::new(),
             checkpoint_interval: 1_000,
+            preview_config: PreviewConfig::default(),
         }
     }
 
@@ -73,6 +75,25 @@ impl<S: RecordSource> DatasetEngine<S> {
         &self.checkpoints
     }
 
+    /// Configure the bounded XML preview used by preparation.
+    pub fn with_preview_config(mut self, config: PreviewConfig) -> RecordResult<Self> {
+        config.validate_for_engine()?;
+        self.preview_config = config;
+        Ok(self)
+    }
+
+    /// Set the bounded XML preview used by preparation.
+    pub fn set_preview_config(&mut self, config: PreviewConfig) -> RecordResult<()> {
+        config.validate_for_engine()?;
+        self.preview_config = config;
+        Ok(())
+    }
+
+    /// Return the current XML preview configuration.
+    pub fn preview_config(&self) -> &PreviewConfig {
+        &self.preview_config
+    }
+
     /// Prepare lightweight previews in memory for fast repeated searches.
     ///
     /// Only the first three XML child elements of each record are retained.
@@ -92,7 +113,7 @@ impl<S: RecordSource> DatasetEngine<S> {
         let mut checkpoints = Vec::new();
 
         while let Some(record) = stream.next_record()? {
-            loaded.push(record.preview()?);
+            loaded.push(record.preview(&self.preview_config)?);
             let count = loaded.len();
             progress(count);
 

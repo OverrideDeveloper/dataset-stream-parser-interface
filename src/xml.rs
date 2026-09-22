@@ -115,6 +115,10 @@ impl<R: BufRead> XmlRecordStream<R> {
 }
 
 impl<R: BufRead> RecordStream for XmlRecordStream<R> {
+    fn checkpoint_position(&self) -> Option<u64> {
+        Some(self.reader.buffer_position() as u64)
+    }
+
     fn next_record(&mut self) -> RecordResult<Option<DatasetRecord>> {
         loop {
             self.buffer.clear();

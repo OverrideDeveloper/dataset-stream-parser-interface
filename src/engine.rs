@@ -96,7 +96,7 @@ impl<S: RecordSource> DatasetEngine<S> {
 
     /// Prepare lightweight previews in memory for fast repeated searches.
     ///
-    /// Only the first three XML child elements of each record are retained.
+    /// Previews are bounded by the configured byte target, optional stop element, and child limit.
     /// Calling this is optional; get() and list() continue to use the source
     /// directly when preparation has not been requested.
     pub fn prep(&mut self) -> RecordResult<usize> {

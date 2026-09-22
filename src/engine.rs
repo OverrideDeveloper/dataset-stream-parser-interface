@@ -3,6 +3,17 @@ use crate::{DatasetRecord, LoadedRecord, RecordError, RecordResult, RecordStream
 /// Re-openable source of dataset record streams.
 pub trait RecordSource {
     fn open(&self) -> RecordResult<Box<dyn RecordStream>>;
+
+    fn open_from(&self, position: u64) -> RecordResult<Box<dyn RecordStream>> {
+        let _ = position;
+        self.open()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Checkpoint {
+    pub index: u64,
+    pub position: u64,
 }
 
 impl<F> RecordSource for F
@@ -18,11 +29,33 @@ where
 pub struct DatasetEngine<S> {
     source: S,
     loaded: Option<Vec<LoadedRecord>>,
+    checkpoints: Vec<Checkpoint>,
+    checkpoint_interval: u64,
 }
 
 impl<S: RecordSource> DatasetEngine<S> {
     pub fn new(source: S) -> Self {
-        Self { source, loaded: None }
+        Self {
+            source,
+            loaded: None,
+            checkpoints: Vec::new(),
+            checkpoint_interval: 100_000,
+        }
+    }
+
+    /// Configure the number of records between retrieval checkpoints.
+    pub fn with_checkpoint_interval(mut self, interval: u64) -> RecordResult<Self> {
+        if interval == 0 {
+            return Err(RecordError::InvalidConfiguration(
+                "checkpoint interval must be greater than zero".into(),
+            ));
+        }
+        self.checkpoint_interval = interval;
+        Ok(self)
+    }
+
+    pub fn checkpoints(&self) -> &[Checkpoint] {
+        &self.checkpoints
     }
 
     /// Prepare lightweight previews in memory for fast repeated searches.
@@ -41,21 +74,44 @@ impl<S: RecordSource> DatasetEngine<S> {
     {
         let mut stream = self.source.open()?;
         let mut loaded = Vec::new();
+        let mut checkpoints = Vec::new();
 
         while let Some(record) = stream.next_record()? {
             loaded.push(record.preview()?);
-            progress(loaded.len());
+            let count = loaded.len();
+            progress(count);
+
+            if count as u64 % self.checkpoint_interval == 0 {
+                if let Some(position) = stream.checkpoint_position() {
+                    checkpoints.push(Checkpoint {
+                        index: count as u64,
+                        position,
+                    });
+                }
+            }
         }
 
         let count = loaded.len();
         self.loaded = Some(loaded);
+        self.checkpoints = checkpoints;
         Ok(count)
     }
 
     /// Get one complete record by its zero-based record index.
-    /// Without prep(), this retains the original sequential behavior.
+    ///
+    /// When preparation produced checkpoints and the source supports seeking,
+    /// retrieval starts at the nearest checkpoint.
     pub fn get(&self, index: u64) -> RecordResult<Option<DatasetRecord>> {
-        let mut stream = self.source.open()?;
+        let checkpoint = self
+            .checkpoints
+            .iter()
+            .rev()
+            .find(|checkpoint| checkpoint.index <= index);
+
+        let mut stream = match checkpoint {
+            Some(checkpoint) => self.source.open_from(checkpoint.position)?,
+            None => self.source.open()?,
+        };
 
         while let Some(record) = stream.next_record()? {
             if record.index() == index {

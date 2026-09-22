@@ -164,7 +164,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Checkpoint interval: {interval} records");
             }
 
-            println!("Preparing first three child elements from each record...");
+            println!("Preparing bounded XML previews (target 4 KiB, stop at <title>, max 10 children)...");
             let result = engine.prep_with_progress(|count| {
                 if count % 10_000 == 0 {
                     print!("\rPrepared {count} records...");

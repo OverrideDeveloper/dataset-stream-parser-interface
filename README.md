@@ -112,7 +112,7 @@ let all_records = engine.list(None)?;
 The operations are deliberately mechanical:
 
 - `get(index)` retrieves one record by zero-based index.
-- `find(query, limit)` returns indexes whose serialized records contain a simple case-sensitive text match.
+- `find(query, limit)` returns indexes whose serialized records contain the query as a complete word or phrase. Matching is case-insensitive; Unicode alphanumeric characters and `_` are treated as word characters.
 - `list(range)` returns records in a Rust half-open range such as `0..10`; `None` means all records.
 - `prep()` optionally prepares lightweight previews for repeated `find()` calls and builds retrieval checkpoints at a configurable interval (1,000 records by default).
 

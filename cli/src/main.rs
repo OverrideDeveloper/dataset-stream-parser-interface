@@ -14,6 +14,7 @@ impl FileRecordSource {
     fn open_input(
         &self,
         position: Option<u64>,
+        record_index: u64,
     ) -> Result<Box<dyn RecordStream>, Box<dyn std::error::Error>> {
         let mut file = File::open(&self.path)?;
         let compressed = self.path.to_ascii_lowercase().ends_with(".bz2");
@@ -33,13 +34,13 @@ impl FileRecordSource {
         Ok(Box::new(XmlRecordStream::new(
             input,
             XmlStreamConfig::new(self.record_element.clone()),
-        )?))
+        )?.with_record_index(record_index)))
     }
 }
 
 impl dataset_stream_parser_interface::RecordSource for FileRecordSource {
     fn open(&self) -> dataset_stream_parser_interface::RecordResult<Box<dyn RecordStream>> {
-        self.open_input(None).map_err(|error| {
+        self.open_input(None, 0).map_err(|error| {
             dataset_stream_parser_interface::RecordError::Io(std::io::Error::other(error.to_string()))
         })
     }
@@ -47,8 +48,9 @@ impl dataset_stream_parser_interface::RecordSource for FileRecordSource {
     fn open_from(
         &self,
         position: u64,
+        record_index: u64,
     ) -> dataset_stream_parser_interface::RecordResult<Box<dyn RecordStream>> {
-        self.open_input(Some(position)).map_err(|error| {
+        self.open_input(Some(position), record_index).map_err(|error| {
             dataset_stream_parser_interface::RecordError::Io(std::io::Error::other(error.to_string()))
         })
     }
@@ -56,6 +58,7 @@ impl dataset_stream_parser_interface::RecordSource for FileRecordSource {
 
 
 
+#[allow(dead_code)]
 fn open_source(
     path: &str,
     record_element: &str,

@@ -158,6 +158,57 @@ impl<S: RecordSource> DatasetEngine<S> {
         Ok(None)
     }
 
+    /// Return whether bounded previews are currently prepared in memory.
+    pub fn is_prepared(&self) -> bool {
+        self.loaded.is_some()
+    }
+
+    /// Return the number of prepared previews currently held in memory.
+    pub fn prepared_preview_count(&self) -> usize {
+        self.loaded.as_ref().map_or(0, Vec::len)
+    }
+
+    /// Return one prepared preview by zero-based record index.
+    pub fn preview_at(&self, index: u64) -> Option<&LoadedRecord> {
+        self.loaded
+            .as_ref()
+            .and_then(|loaded| loaded.iter().find(|record| record.index() == index))
+    }
+
+    /// Search only the prepared preview table.
+    pub fn search_previews(&self, query: &str, limit: Option<usize>) -> RecordResult<Vec<u64>> {
+        let loaded = self.loaded.as_ref().ok_or_else(|| {
+            RecordError::InvalidConfiguration(
+                "preview table is not prepared; run prep() first".into(),
+            )
+        })?;
+
+        if query.is_empty() {
+            return Err(RecordError::InvalidConfiguration(
+                "preview search query cannot be empty".into(),
+            ));
+        }
+
+        let mut matches = Vec::new();
+        for record in loaded {
+            if contains_whole_words(record.as_bytes(), query) {
+                matches.push(record.index());
+                if let Some(limit) = limit {
+                    if matches.len() >= limit {
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(matches)
+    }
+
+    /// Release the prepared preview table while retaining retrieval checkpoints.
+    pub fn clear_previews(&mut self) {
+        self.loaded = None;
+    }
+
     /// Find against prepared previews when available; otherwise scan the stream.
     pub fn find(&self, query: &str, limit: Option<usize>) -> RecordResult<Vec<u64>> {
         if query.is_empty() {

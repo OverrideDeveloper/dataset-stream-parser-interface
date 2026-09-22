@@ -88,7 +88,7 @@ fn print_record(record: &dataset_stream_parser_interface::DatasetRecord) {
 
 fn print_help() {
     println!("Commands:");
-    println!("  prep                  Prepare lightweight previews for find");
+    println!("  prep [interval]       Prepare previews; optionally set checkpoint spacing");
     println!("  find <text> [limit]   Find record indexes containing text");
     println!("  get <index>           Retrieve one record by index");
     println!("  list <start>..<end>   List a half-open range, e.g. list 0..10");
@@ -146,7 +146,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        if command == "prep" {
+        if command == "prep" || command.starts_with("prep ") {
+            let interval = command
+                .strip_prefix("prep ")
+                .and_then(|value| value.trim().parse::<u64>().ok());
+
+            if command != "prep" && interval.is_none() {
+                eprintln!("usage: prep [interval]");
+                continue;
+            }
+
+            if let Some(interval) = interval {
+                if let Err(error) = engine.set_checkpoint_interval(interval) {
+                    eprintln!("error: {error:?}");
+                    continue;
+                }
+                println!("Checkpoint interval: {interval} records");
+            }
+
             println!("Preparing first three child elements from each record...");
             let result = engine.prep_with_progress(|count| {
                 if count % 10_000 == 0 {

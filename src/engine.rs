@@ -77,14 +77,14 @@ impl<S: RecordSource> DatasetEngine<S> {
 
     /// Configure the bounded XML preview used by preparation.
     pub fn with_preview_config(mut self, config: PreviewConfig) -> RecordResult<Self> {
-        config.validate_for_engine()?;
+        config.validate()?;
         self.preview_config = config;
         Ok(self)
     }
 
     /// Set the bounded XML preview used by preparation.
     pub fn set_preview_config(&mut self, config: PreviewConfig) -> RecordResult<()> {
-        config.validate_for_engine()?;
+        config.validate()?;
         self.preview_config = config;
         Ok(())
     }

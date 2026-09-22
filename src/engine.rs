@@ -4,8 +4,12 @@ use crate::{DatasetRecord, LoadedRecord, RecordError, RecordResult, RecordStream
 pub trait RecordSource {
     fn open(&self) -> RecordResult<Box<dyn RecordStream>>;
 
-    fn open_from(&self, position: u64) -> RecordResult<Box<dyn RecordStream>> {
-        let _ = position;
+    fn open_from(
+        &self,
+        position: u64,
+        record_index: u64,
+    ) -> RecordResult<Box<dyn RecordStream>> {
+        let _ = (position, record_index);
         self.open()
     }
 }
@@ -109,7 +113,7 @@ impl<S: RecordSource> DatasetEngine<S> {
             .find(|checkpoint| checkpoint.index <= index);
 
         let mut stream = match checkpoint {
-            Some(checkpoint) => self.source.open_from(checkpoint.position)?,
+            Some(checkpoint) => self.source.open_from(checkpoint.position, checkpoint.index)?,
             None => self.source.open()?,
         };
 

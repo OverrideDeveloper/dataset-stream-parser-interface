@@ -28,7 +28,7 @@ impl PreviewConfig {
         self
     }
 
-    fn validate(&self) -> RecordResult<()> {
+    pub(crate) fn validate(&self) -> RecordResult<()> {
         if self.max_bytes == 0 {
             return Err(RecordError::InvalidConfiguration(
                 "preview max_bytes must be greater than zero".into(),

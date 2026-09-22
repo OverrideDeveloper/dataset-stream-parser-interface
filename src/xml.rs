@@ -62,6 +62,11 @@ impl<R: BufRead> XmlRecordStream<R> {
         })
     }
 
+    pub fn with_record_index(mut self, record_index: u64) -> Self {
+        self.record_index = record_index;
+        self
+    }
+
     fn append_event(record: &mut Vec<u8>, event: Event<'_>, max: usize) -> RecordResult<()> {
         Writer::new(&mut *record).write_event(event)?;
 

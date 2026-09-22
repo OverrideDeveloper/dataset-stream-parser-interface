@@ -145,12 +145,11 @@ impl<S: RecordSource> DatasetEngine<S> {
             ));
         }
 
-        let needle = query.as_bytes();
         let mut matches = Vec::new();
 
         if let Some(loaded) = &self.loaded {
             for record in loaded {
-                if record.as_bytes().windows(needle.len()).any(|window| window == needle) {
+                if contains_whole_words(record.as_bytes(), query) {
                     matches.push(record.index());
                     if let Some(limit) = limit {
                         if matches.len() >= limit {
@@ -164,7 +163,7 @@ impl<S: RecordSource> DatasetEngine<S> {
 
         let mut stream = self.source.open()?;
         while let Some(record) = stream.next_record()? {
-            if record.as_bytes().windows(needle.len()).any(|window| window == needle) {
+            if contains_whole_words(record.as_bytes(), query) {
                 matches.push(record.index());
                 if let Some(limit) = limit {
                     if matches.len() >= limit {
@@ -176,6 +175,73 @@ impl<S: RecordSource> DatasetEngine<S> {
 
         Ok(matches)
     }
+}
+
+/// Return true when the query occurs as a complete word or phrase in the text.
+///
+/// Matching is case-insensitive. Unicode alphanumeric characters and '_' are
+/// treated as word characters; punctuation and whitespace form boundaries.
+fn contains_whole_words(text: &[u8], query: &str) -> bool {
+    let query = query.trim();
+    if query.is_empty() {
+        return false;
+    }
+
+    let text = String::from_utf8_lossy(text).to_lowercase();
+    let query = query.to_lowercase();
+
+    let mut search_start = 0usize;
+    while let Some(relative_start) = text[search_start..].find(&query) {
+        let start = search_start + relative_start;
+        let end = start + query.len();
+
+        let before_is_word = text[..start]
+            .chars()
+            .next_back()
+            .is_some_and(is_word_character);
+        let after_is_word = text[end..]
+            .chars()
+            .next()
+            .is_some_and(is_word_character);
+
+        if !before_is_word && !after_is_word {
+            return true;
+        }
+
+        search_start = start + query.len();
+    }
+
+    false
+}
+
+fn is_word_character(character: char) -> bool {
+    character.is_alphanumeric() || character == '_'
+}
+
+#[cfg(test)]
+mod tests {
+    use super::contains_whole_words;
+
+    #[test]
+    fn find_matches_complete_words_case_insensitively() {
+        assert!(contains_whole_words(b"Lua is a programming language", "lua"));
+        assert!(contains_whole_words(b"A LUA interpreter", "lua"));
+        assert!(!contains_whole_words(b"simulator-based", "lua"));
+        assert!(!contains_whole_words(b"player", "lay"));
+    }
+
+    #[test]
+    fn find_accepts_punctuation_as_word_boundaries() {
+        assert!(contains_whole_words(b"Use (Lua), please.", "lua"));
+        assert!(contains_whole_words(b"Lua-programming", "lua"));
+    }
+
+    #[test]
+    fn find_matches_whole_phrases() {
+        assert!(contains_whole_words(b"Lua programming language", "lua programming"));
+        assert!(!contains_whole_words(b"Lua programmer", "lua programming"));
+    }
+}
 
     /// List complete records in range, or all records when range is None.
     pub fn list(&self, range: Option<std::ops::Range<u64>>) -> RecordResult<Vec<DatasetRecord>> {

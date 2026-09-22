@@ -18,6 +18,11 @@ impl FileRecordSource {
     ) -> Result<Box<dyn RecordStream>, Box<dyn std::error::Error>> {
         let mut file = File::open(&self.path)?;
         let compressed = self.path.to_ascii_lowercase().ends_with(".bz2");
+        let start_index = if compressed && position.is_some() {
+            0
+        } else {
+            record_index
+        };
 
         if let Some(position) = position {
             if !compressed {
@@ -34,7 +39,7 @@ impl FileRecordSource {
         Ok(Box::new(XmlRecordStream::new(
             input,
             XmlStreamConfig::new(self.record_element.clone()),
-        )?.with_record_index(record_index)))
+        )?.with_record_index(start_index)))
     }
 }
 

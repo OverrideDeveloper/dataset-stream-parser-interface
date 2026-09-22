@@ -5,6 +5,55 @@ use serde::de::DeserializeOwned;
 use std::fmt;
 
 #[derive(Debug, Clone)]
+pub struct PreviewConfig {
+    /// Target preview size in bytes. The child that reaches this target is included.
+    pub max_bytes: usize,
+    /// Optional child element name that ends the preview when encountered.
+    pub stop_element: Option<String>,
+    /// Maximum number of top-level child elements retained in the preview.
+    pub max_children: usize,
+}
+
+impl PreviewConfig {
+    pub fn new(max_bytes: usize, max_children: usize) -> Self {
+        Self {
+            max_bytes,
+            stop_element: None,
+            max_children,
+        }
+    }
+
+    pub fn with_stop_element(mut self, element: impl Into<String>) -> Self {
+        self.stop_element = Some(element.into());
+        self
+    }
+
+    fn validate(&self) -> RecordResult<()> {
+        if self.max_bytes == 0 {
+            return Err(RecordError::InvalidConfiguration(
+                "preview max_bytes must be greater than zero".into(),
+            ));
+        }
+        if self.max_children == 0 {
+            return Err(RecordError::InvalidConfiguration(
+                "preview max_children must be greater than zero".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Default for PreviewConfig {
+    fn default() -> Self {
+        Self {
+            max_bytes: 4096,
+            stop_element: Some("title".into()),
+            max_children: 10,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct DatasetRecord {
     index: u64,
     bytes: Vec<u8>,
@@ -20,8 +69,10 @@ impl DatasetRecord {
     pub fn is_empty(&self) -> bool { self.bytes.is_empty() }
     pub fn as_bytes(&self) -> &[u8] { &self.bytes }
 
-    /// Build a lightweight XML preview containing the record start and first three child elements.
-    pub(crate) fn preview(&self) -> RecordResult<LoadedRecord> {
+    /// Build a bounded XML preview from the record start and child elements.
+    pub(crate) fn preview(&self, config: &PreviewConfig) -> RecordResult<LoadedRecord> {
+        config.validate()?;
+
         let mut reader = Reader::from_reader(self.bytes.as_slice());
         reader.config_mut().trim_text(false);
 
@@ -38,7 +89,8 @@ impl DatasetRecord {
                     writer.write_event(Event::Start(event.into_owned()))?;
                     root_seen = true;
                 }
-                Event::Start(_) if root_seen && child_count < 3 => {
+                Event::Start(event) if root_seen && child_count < config.max_children => {
+                    let child_name = event.name().as_ref().to_vec();
                     let mut depth = 1usize;
                     let mut writer = Writer::new(&mut preview);
 
@@ -67,18 +119,34 @@ impl DatasetRecord {
                     }
 
                     child_count += 1;
+                    let reached_target = preview.len() >= config.max_bytes;
+                    let reached_stop_element = config
+                        .stop_element
+                        .as_deref()
+                        .is_some_and(|name| name.as_bytes() == child_name.as_slice());
+
+                    if reached_target || reached_stop_element || child_count >= config.max_children {
+                        break;
+                    }
                 }
-                Event::Empty(event) if root_seen && child_count < 3 => {
+                Event::Empty(event) if root_seen && child_count < config.max_children => {
+                    let child_name = event.name().as_ref().to_vec();
                     let mut writer = Writer::new(&mut preview);
                     writer.write_event(Event::Empty(event.into_owned()))?;
                     child_count += 1;
+
+                    let reached_target = preview.len() >= config.max_bytes;
+                    let reached_stop_element = config
+                        .stop_element
+                        .as_deref()
+                        .is_some_and(|name| name.as_bytes() == child_name.as_slice());
+
+                    if reached_target || reached_stop_element || child_count >= config.max_children {
+                        break;
+                    }
                 }
                 Event::Eof => break,
                 _ => {}
-            }
-
-            if child_count == 3 {
-                break;
             }
         }
 

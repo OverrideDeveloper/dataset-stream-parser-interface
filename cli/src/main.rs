@@ -3,7 +3,58 @@ use dataset_stream_parser_interface::{
     DatasetEngine, RecordStream, XmlRecordStream, XmlStreamConfig,
 };
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Seek, Write};
+
+struct FileRecordSource {
+    path: String,
+    record_element: String,
+}
+
+impl FileRecordSource {
+    fn open_input(
+        &self,
+        position: Option<u64>,
+    ) -> Result<Box<dyn RecordStream>, Box<dyn std::error::Error>> {
+        let mut file = File::open(&self.path)?;
+        let compressed = self.path.to_ascii_lowercase().ends_with(".bz2");
+
+        if let Some(position) = position {
+            if !compressed {
+                file.seek(std::io::SeekFrom::Start(position))?;
+            }
+        }
+
+        let input: Box<dyn BufRead> = if compressed {
+            Box::new(BufReader::new(MultiBzDecoder::new(BufReader::new(file))))
+        } else {
+            Box::new(BufReader::new(file))
+        };
+
+        Ok(Box::new(XmlRecordStream::new(
+            input,
+            XmlStreamConfig::new(self.record_element.clone()),
+        )?))
+    }
+}
+
+impl dataset_stream_parser_interface::RecordSource for FileRecordSource {
+    fn open(&self) -> dataset_stream_parser_interface::RecordResult<Box<dyn RecordStream>> {
+        self.open_input(None).map_err(|error| {
+            dataset_stream_parser_interface::RecordError::Io(std::io::Error::other(error.to_string()))
+        })
+    }
+
+    fn open_from(
+        &self,
+        position: u64,
+    ) -> dataset_stream_parser_interface::RecordResult<Box<dyn RecordStream>> {
+        self.open_input(Some(position)).map_err(|error| {
+            dataset_stream_parser_interface::RecordError::Io(std::io::Error::other(error.to_string()))
+        })
+    }
+}
+
+
 
 fn open_source(
     path: &str,
@@ -51,14 +102,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     let record_element = args.next().unwrap_or_else(|| "page".into());
 
-    let source_path = path.clone();
-    let source_element = record_element.clone();
-
-    let mut engine = DatasetEngine::new(move || {
-        open_source(&source_path, &source_element)
-            .map_err(|error| dataset_stream_parser_interface::RecordError::Io(
-                std::io::Error::other(error.to_string()),
-            ))
+    let mut engine = DatasetEngine::new(FileRecordSource {
+        path: path.clone(),
+        record_element: record_element.clone(),
     });
 
     println!("Dataset CLI");

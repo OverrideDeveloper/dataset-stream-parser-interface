@@ -114,13 +114,13 @@ The operations are deliberately mechanical:
 - `get(index)` retrieves one record by zero-based index.
 - `find(query, limit)` returns indexes whose serialized records contain a simple case-sensitive text match.
 - `list(range)` returns records in a Rust half-open range such as `0..10`; `None` means all records.
-- `prep()` optionally prepares lightweight previews for repeated `find()` calls.
+- `prep()` optionally prepares lightweight previews for repeated `find()` calls and builds retrieval checkpoints at a configurable interval (100,000 records by default).
 
 `prep()` is an explicit preparation step rather than a requirement for dataset access. Without it, `get()`, `find()`, and `list()` continue to operate directly against the re-openable stream. When preparation is requested, only the first three XML child elements of each record are retained for the in-memory search cache.
 
 The engine re-opens the source for each direct operation. The initial implementation may walk from the beginning of the dataset; checkpointed retrieval is a later optimization that can be added behind the same interface.
 
-`find()` returns indexes rather than records so discovery and retrieval remain separate concerns: find where, then get what.
+`find()` returns indexes rather than records so discovery and retrieval remain separate concerns: find where, then get what. When the source supports seeking, `get()` uses the nearest prepared checkpoint; non-seekable sources safely fall back to streaming from the beginning. The CLI can seek ordinary XML files; bzip2 multistream input remains sequential because its decompressed positions are not directly seekable.
 
 ## Current scope
 
@@ -142,7 +142,7 @@ Not yet included:
 - Wikipedia-specific schema
 - compressed-input adapters beyond bzip2 multistream input
 - random access
-- checkpointed retrieval
+- checkpointed retrieval for seekable sources
 - database storage
 - semantic search
 - network service

@@ -89,7 +89,7 @@ fn print_record(record: &dataset_stream_parser_interface::DatasetRecord) {
 fn print_help() {
     println!("Commands:");
     println!("  prep [interval]       Prepare previews; optionally set checkpoint spacing");
-    println!("  find <text> [limit]   Find record indexes containing text");
+    println!("  find <text> [limit]   Find whole-word/phrase matches");
     println!("  get <index>           Retrieve one record by index");
     println!("  list <start>..<end>   List a half-open range, e.g. list 0..10");
     println!("  list *                List every record (use with care)");

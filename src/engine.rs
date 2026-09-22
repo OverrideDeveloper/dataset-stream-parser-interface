@@ -177,6 +177,34 @@ impl<S: RecordSource> DatasetEngine<S> {
     }
 }
 
+    /// List complete records in range, or all records when range is None.
+    pub fn list(&self, range: Option<std::ops::Range<u64>>) -> RecordResult<Vec<DatasetRecord>> {
+        let mut stream = self.source.open()?;
+        let (start, end) = match range {
+            Some(range) => (range.start, Some(range.end)),
+            None => (0, None),
+        };
+
+        let mut records = Vec::new();
+
+        while let Some(record) = stream.next_record()? {
+            if record.index() < start {
+                continue;
+            }
+
+            if let Some(end) = end {
+                if record.index() >= end {
+                    break;
+                }
+            }
+
+            records.push(record);
+        }
+
+        Ok(records)
+    }
+}
+
 /// Return true when the query occurs as a complete word or phrase in the text.
 ///
 /// Matching is case-insensitive. Unicode alphanumeric characters and '_' are
@@ -240,33 +268,5 @@ mod tests {
     fn find_matches_whole_phrases() {
         assert!(contains_whole_words(b"Lua programming language", "lua programming"));
         assert!(!contains_whole_words(b"Lua programmer", "lua programming"));
-    }
-}
-
-    /// List complete records in range, or all records when range is None.
-    pub fn list(&self, range: Option<std::ops::Range<u64>>) -> RecordResult<Vec<DatasetRecord>> {
-        let mut stream = self.source.open()?;
-        let (start, end) = match range {
-            Some(range) => (range.start, Some(range.end)),
-            None => (0, None),
-        };
-
-        let mut records = Vec::new();
-
-        while let Some(record) = stream.next_record()? {
-            if record.index() < start {
-                continue;
-            }
-
-            if let Some(end) = end {
-                if record.index() >= end {
-                    break;
-                }
-            }
-
-            records.push(record);
-        }
-
-        Ok(records)
     }
 }

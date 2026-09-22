@@ -105,6 +105,22 @@ fn parse_range(value: &str) -> Option<std::ops::Range<u64>> {
     Some(start.parse().ok()?..end.parse().ok()?)
 }
 
+fn parse_search_args(value: &str) -> Option<(&str, Option<usize>)> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    let value = value.trim_matches('"');
+    if let Some((query, limit)) = value.rsplit_once(' ') {
+        if let Ok(limit) = limit.parse::<usize>() {
+            return Some((query.trim_matches('"').trim(), Some(limit)));
+        }
+    }
+
+    Some((value, None))
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args();
     let program = args.next().unwrap_or_else(|| "dataset-stream-parser-cli".into());
@@ -229,9 +245,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if let Some(rest) = command.strip_prefix("searchpreptable ") {
-            let mut parts = rest.trim().splitn(2, ' ');
-            let query = parts.next().unwrap_or_default().trim_matches('"');
-            let limit = parts.next().and_then(|value| value.parse::<usize>().ok());
+            let Some((query, limit)) = parse_search_args(rest) else {
+                eprintln!("usage: searchpreptable <text> [limit]");
+                continue;
+            };
 
             match engine.search_previews(query, limit) {
                 Ok(matches) => println!("{matches:?}"),
@@ -256,9 +273,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if let Some(rest) = command.strip_prefix("find ") {
-            let mut parts = rest.trim().splitn(2, ' ');
-            let query = parts.next().unwrap_or_default().trim_matches('"');
-            let limit = parts.next().and_then(|value| value.parse::<usize>().ok());
+            let Some((query, limit)) = parse_search_args(rest) else {
+                eprintln!("usage: find <text> [limit]");
+                continue;
+            };
 
             match engine.find(query, limit) {
                 Ok(matches) => println!("{matches:?}"),

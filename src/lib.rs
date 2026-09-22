@@ -8,7 +8,7 @@ mod engine;
 mod record;
 pub mod xml;
 
-pub use engine::{DatasetEngine, RecordSource};
+pub use engine::{Checkpoint, DatasetEngine, RecordSource};
 pub use record::{DatasetRecord, LoadedRecord, RecordDecoder, RecordError, RecordResult};
 pub use xml::{XmlRecordStream, XmlStreamConfig};
 
@@ -16,4 +16,9 @@ pub use xml::{XmlRecordStream, XmlStreamConfig};
 pub trait RecordStream {
     /// Return the next record, or None at end of input.
     fn next_record(&mut self) -> RecordResult<Option<DatasetRecord>>;
+
+    /// Return a source position that can be used as a retrieval checkpoint.
+    fn checkpoint_position(&self) -> Option<u64> {
+        None
+    }
 }

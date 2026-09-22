@@ -43,19 +43,30 @@ impl<S: RecordSource> DatasetEngine<S> {
             source,
             loaded: None,
             checkpoints: Vec::new(),
-            checkpoint_interval: 100_000,
+            checkpoint_interval: 1_000,
         }
     }
 
     /// Configure the number of records between retrieval checkpoints.
     pub fn with_checkpoint_interval(mut self, interval: u64) -> RecordResult<Self> {
+        self.set_checkpoint_interval(interval)?;
+        Ok(self)
+    }
+
+    /// Set the number of records between retrieval checkpoints.
+    pub fn set_checkpoint_interval(&mut self, interval: u64) -> RecordResult<()> {
         if interval == 0 {
             return Err(RecordError::InvalidConfiguration(
                 "checkpoint interval must be greater than zero".into(),
             ));
         }
         self.checkpoint_interval = interval;
-        Ok(self)
+        Ok(())
+    }
+
+    /// Return the configured number of records between retrieval checkpoints.
+    pub fn checkpoint_interval(&self) -> u64 {
+        self.checkpoint_interval
     }
 
     pub fn checkpoints(&self) -> &[Checkpoint] {

@@ -114,13 +114,16 @@ The operations are deliberately mechanical:
 - `get(index)` retrieves one record by zero-based index.
 - `find(query, limit)` returns indexes whose serialized records contain the query as a complete word or phrase. Matching is case-insensitive; Unicode alphanumeric characters and `_` are treated as word characters.
 - `list(range)` returns records in a Rust half-open range such as `0..10`; `None` means all records.
-- `prep()` optionally prepares bounded XML previews for repeated `find()` calls and builds retrieval checkpoints at a configurable interval (1,000 records by default).
+- `prep()` explicitly materializes bounded XML previews for repeated preview-table searches and builds retrieval checkpoints at a configurable interval (1,000 records by default).
+- `showpreptable()`, `search_previews()`, and `clear_previews()` provide an explicit lifecycle for the in-memory preview table: inspect it, search only what was prepared, or release the preview table.
 
 `prep()` is an explicit preparation step rather than a requirement for dataset access. Without it, `get()`, `find()`, and `list()` continue to operate directly against the re-openable stream. When preparation is requested, the in-memory search cache retains a bounded XML preview. By default the preview targets 4 KiB, stops after a `<title>` child when encountered, and never examines more than 10 top-level child elements. The child that reaches the byte target or matches the stop element is included. This behavior is configurable through `PreviewConfig` and `DatasetEngine::set_preview_config()` / `with_preview_config()`.
 
 The checkpoint spacing can be configured through `DatasetEngine::with_checkpoint_interval()` or `set_checkpoint_interval()`. The CLI also accepts an optional interval on the `prep` command, for example `prep 5000`.
 
 The engine re-opens the source for each direct operation. The initial implementation may walk from the beginning of the dataset; checkpointed retrieval is a later optimization that can be added behind the same interface.
+
+The preview table is an explicit working set. `search_previews()` never scans the underlying dataset and returns an error if `prep()` has not been called. `clear_previews()` releases the preview records while retaining retrieval checkpoints, so `get()` can continue to use prepared checkpoints. The existing `find()` operation remains a general search operation: it uses prepared previews when available and otherwise scans the source.
 
 `find()` returns indexes rather than records so discovery and retrieval remain separate concerns: find where, then get what. When the source supports seeking, `get()` uses the nearest prepared checkpoint; non-seekable sources safely fall back to streaming from the beginning. The CLI can seek ordinary XML files; bzip2 multistream input remains sequential because its decompressed positions are not directly seekable.
 
@@ -136,7 +139,7 @@ The MVP currently provides:
 - generic Serde decoding
 - example CLI program
 - bzip2 multistream input for compressed datasets
-- lightweight search preparation
+- bounded preview-table preparation and explicit preview-table lifecycle
 - checkpointed retrieval for seekable sources
 - unit tests for streaming and bounds
 

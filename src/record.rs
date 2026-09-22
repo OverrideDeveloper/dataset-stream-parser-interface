@@ -7,7 +7,7 @@ use std::fmt;
 #[derive(Debug, Clone)]
 pub struct PreviewConfig {
     /// Target preview size in bytes. The child that reaches this target is included.
-    pub max_bytes: usize,
+    pub target_bytes: usize,
     /// Optional child element name that ends the preview when encountered.
     pub stop_element: Option<String>,
     /// Maximum number of top-level child elements retained in the preview.
@@ -15,9 +15,9 @@ pub struct PreviewConfig {
 }
 
 impl PreviewConfig {
-    pub fn new(max_bytes: usize, max_children: usize) -> Self {
+    pub fn new(target_bytes: usize, max_children: usize) -> Self {
         Self {
-            max_bytes,
+            target_bytes,
             stop_element: None,
             max_children,
         }
@@ -29,9 +29,9 @@ impl PreviewConfig {
     }
 
     pub(crate) fn validate(&self) -> RecordResult<()> {
-        if self.max_bytes == 0 {
+        if self.target_bytes == 0 {
             return Err(RecordError::InvalidConfiguration(
-                "preview max_bytes must be greater than zero".into(),
+                "preview target_bytes must be greater than zero".into(),
             ));
         }
         if self.max_children == 0 {
@@ -46,7 +46,7 @@ impl PreviewConfig {
 impl Default for PreviewConfig {
     fn default() -> Self {
         Self {
-            max_bytes: 4096,
+            target_bytes: 4096,
             stop_element: Some("title".into()),
             max_children: 10,
         }
@@ -119,7 +119,7 @@ impl DatasetRecord {
                     }
 
                     child_count += 1;
-                    let reached_target = preview.len() >= config.max_bytes;
+                    let reached_target = preview.len() >= config.target_bytes;
                     let reached_stop_element = config
                         .stop_element
                         .as_deref()
@@ -135,7 +135,7 @@ impl DatasetRecord {
                     writer.write_event(Event::Empty(event.into_owned()))?;
                     child_count += 1;
 
-                    let reached_target = preview.len() >= config.max_bytes;
+                    let reached_target = preview.len() >= config.target_bytes;
                     let reached_stop_element = config
                         .stop_element
                         .as_deref()
@@ -213,3 +213,64 @@ impl From<quick_xml::Error> for RecordError {
 }
 
 pub type RecordResult<T> = Result<T, RecordError>;
+
+
+#[cfg(test)]
+mod tests {
+    use super::{DatasetRecord, PreviewConfig};
+
+    fn preview(xml: &str, config: PreviewConfig) -> String {
+        let record = DatasetRecord::new(0, xml.as_bytes().to_vec());
+        let loaded = record.preview(&config).unwrap();
+        String::from_utf8(loaded.as_bytes().to_vec()).unwrap()
+    }
+
+    #[test]
+    fn preview_stops_at_target_size() {
+        let config = PreviewConfig::new(24, 10);
+        let result = preview(
+            "<article><a>one</a><b>two</b><c>three</c></article>",
+            config,
+        );
+
+        assert!(result.contains("<a>one</a>"));
+        assert!(!result.contains("<c>three</c>"));
+    }
+
+    #[test]
+    fn preview_includes_stop_element() {
+        let config = PreviewConfig::new(4, 10).with_stop_element("title");
+        let result = preview(
+            "<article><author>one</author><author>two</author><title>Important title</title><year>2026</year></article>",
+            config,
+        );
+
+        assert!(result.contains("<title>Important title</title>"));
+        assert!(!result.contains("<year>2026</year>"));
+    }
+
+    #[test]
+    fn preview_stops_at_child_limit_when_stop_element_is_missing() {
+        let config = PreviewConfig::new(4096, 2);
+        let result = preview(
+            "<article><a>one</a><b>two</b><c>three</c></article>",
+            config,
+        );
+
+        assert!(result.contains("<a>one</a>"));
+        assert!(result.contains("<b>two</b>"));
+        assert!(!result.contains("<c>three</c>"));
+    }
+
+    #[test]
+    fn preview_keeps_nested_child_element_intact() {
+        let config = PreviewConfig::new(4096, 1);
+        let result = preview(
+            "<article><author><name>Alice</name></author><title>Title</title></article>",
+            config,
+        );
+
+        assert!(result.contains("<author><name>Alice</name></author>"));
+        assert!(!result.contains("<title>Title</title>"));
+    }
+}

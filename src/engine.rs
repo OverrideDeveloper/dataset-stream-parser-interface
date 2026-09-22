@@ -175,7 +175,6 @@ impl<S: RecordSource> DatasetEngine<S> {
 
         Ok(matches)
     }
-}
 
     /// List complete records in range, or all records when range is None.
     pub fn list(&self, range: Option<std::ops::Range<u64>>) -> RecordResult<Vec<DatasetRecord>> {

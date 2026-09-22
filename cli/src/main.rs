@@ -89,6 +89,9 @@ fn print_record(record: &dataset_stream_parser_interface::DatasetRecord) {
 fn print_help() {
     println!("Commands:");
     println!("  prep [interval]       Prepare previews; optionally set checkpoint spacing");
+    println!("  showpreptable [index] Show prepared preview metadata or one preview");
+    println!("  searchpreptable <text> [limit] Search only the prepared preview table");
+    println!("  clearpreptable        Release the prepared preview table");
     println!("  find <text> [limit]   Find whole-word/phrase matches");
     println!("  get <index>           Retrieve one record by index");
     println!("  list <start>..<end>   List a half-open range, e.g. list 0..10");
@@ -178,6 +181,76 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Search cache ready.");
                 }
                 Err(error) => eprintln!("\nerror: {error:?}"),
+            }
+            continue;
+        }
+
+        if command == "showpreptable" || command.starts_with("showpreptable ") {
+            if !engine.is_prepared() {
+                eprintln!("Preview table is not prepared. Run 'prep' first.");
+                continue;
+            }
+
+            let value = command.strip_prefix("showpreptable").unwrap().trim();
+            if value.is_empty() {
+                let count = engine.prepared_preview_count();
+                let config = engine.preview_config();
+                println!("Preview table: {count} records");
+                println!(
+                    "  target: {} bytes, stop element: {}, max children: {}",
+                    config.target_bytes,
+                    config.stop_element.as_deref().unwrap_or("<none>"),
+                    config.max_children
+                );
+                let sample_count = count.min(3);
+                if sample_count > 0 {
+                    println!("Sample previews:");
+                    for index in 0..sample_count {
+                        if let Some(record) = engine.preview_at(index as u64) {
+                            println!("#{} ({} bytes):", record.index(), record.len());
+                            println!("{}", String::from_utf8_lossy(record.as_bytes()));
+                        }
+                    }
+                }
+                continue;
+            }
+
+            match value.parse::<u64>() {
+                Ok(index) => match engine.preview_at(index) {
+                    Some(record) => {
+                        println!("#{} ({} bytes):", record.index(), record.len());
+                        println!("{}", String::from_utf8_lossy(record.as_bytes()));
+                    }
+                    None => println!("preview for record #{index} not found"),
+                },
+                Err(_) => eprintln!("usage: showpreptable [index]"),
+            }
+            continue;
+        }
+
+        if let Some(rest) = command.strip_prefix("searchpreptable ") {
+            let mut parts = rest.trim().splitn(2, ' ');
+            let query = parts.next().unwrap_or_default().trim_matches('"');
+            let limit = parts.next().and_then(|value| value.parse::<usize>().ok());
+
+            match engine.search_previews(query, limit) {
+                Ok(matches) => println!("{matches:?}"),
+                Err(error) => eprintln!("error: {error:?}"),
+            }
+            continue;
+        }
+
+        if command == "searchpreptable" {
+            eprintln!("usage: searchpreptable <text> [limit]");
+            continue;
+        }
+
+        if command == "clearpreptable" {
+            if engine.is_prepared() {
+                engine.clear_previews();
+                println!("Preview table cleared.");
+            } else {
+                println!("Preview table is not prepared.");
             }
             continue;
         }

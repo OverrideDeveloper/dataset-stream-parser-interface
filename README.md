@@ -114,9 +114,11 @@ The operations are deliberately mechanical:
 - `get(index)` retrieves one record by zero-based index.
 - `find(query, limit)` returns indexes whose serialized records contain a simple case-sensitive text match.
 - `list(range)` returns records in a Rust half-open range such as `0..10`; `None` means all records.
-- `prep()` optionally prepares lightweight previews for repeated `find()` calls and builds retrieval checkpoints at a configurable interval (100,000 records by default).
+- `prep()` optionally prepares lightweight previews for repeated `find()` calls and builds retrieval checkpoints at a configurable interval (1,000 records by default).
 
 `prep()` is an explicit preparation step rather than a requirement for dataset access. Without it, `get()`, `find()`, and `list()` continue to operate directly against the re-openable stream. When preparation is requested, only the first three XML child elements of each record are retained for the in-memory search cache.
+
+The checkpoint spacing can be configured through `DatasetEngine::with_checkpoint_interval()` or `set_checkpoint_interval()`. The CLI also accepts an optional interval on the `prep` command, for example `prep 5000`.
 
 The engine re-opens the source for each direct operation. The initial implementation may walk from the beginning of the dataset; checkpointed retrieval is a later optimization that can be added behind the same interface.
 
@@ -135,14 +137,13 @@ The MVP currently provides:
 - example CLI program
 - bzip2 multistream input for compressed datasets
 - lightweight search preparation
+- checkpointed retrieval for seekable sources
 - unit tests for streaming and bounds
 
 Not yet included:
 
 - Wikipedia-specific schema
 - compressed-input adapters beyond bzip2 multistream input
-- random access
-- checkpointed retrieval for seekable sources
 - database storage
 - semantic search
 - network service

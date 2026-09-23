@@ -86,7 +86,14 @@ fn print_record(record: &dataset_stream_parser_interface::DatasetRecord) {
     println!("{}", String::from_utf8_lossy(record.as_bytes()));
 }
 
-fn print_preview(record: &PreviewRecord) {\n    println!("#{} ({} bytes):", record.index(), record.len());\n    for element in record.elements() {\n        println!("  <{}>: {}", element.name, element.text);\n    }\n}\n\nfn print_help() {
+fn print_preview(record: &PreviewRecord) {
+    println!("#{} ({} bytes):", record.index(), record.len());
+    for element in record.elements() {
+        println!("  <{}>: {}", element.name, element.text);
+    }
+}
+
+fn print_help() {
     println!("Commands:");
     println!("  prep [interval]       Prepare named-text previews; optionally set checkpoint spacing");
     println!("  showpreptable [index] Show prepared preview metadata or one preview");

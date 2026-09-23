@@ -139,7 +139,7 @@ impl DatasetRecord {
         loop {
             buffer.clear();
             match reader.read_event_into(&mut buffer)? {
-                Event::Start(event) if !root_seen => {
+                Event::Start(_) if !root_seen => {
                     root_seen = true;
                 }
                 Event::Start(event) if root_seen && elements.len() < config.max_children => {

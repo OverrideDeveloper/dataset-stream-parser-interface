@@ -3,12 +3,7 @@ use crate::{DatasetRecord, LoadedRecord, PreviewConfig, RecordError, RecordResul
 /// Re-openable source of dataset record streams.
 pub trait RecordSource {
     fn open(&self) -> RecordResult<Box<dyn RecordStream>>;
-
-    fn open_from(
-        &self,
-        position: u64,
-        record_index: u64,
-    ) -> RecordResult<Box<dyn RecordStream>> {
+    fn open_from(&self, position: u64, record_index: u64) -> RecordResult<Box<dyn RecordStream>> {
         let _ = (position, record_index);
         self.open()
     }
@@ -24,12 +19,9 @@ impl<F> RecordSource for F
 where
     F: Fn() -> RecordResult<Box<dyn RecordStream>>,
 {
-    fn open(&self) -> RecordResult<Box<dyn RecordStream>> {
-        self()
-    }
+    fn open(&self) -> RecordResult<Box<dyn RecordStream>> { self() }
 }
 
-/// Dataset access operations built on top of a re-openable record source.
 pub struct DatasetEngine<S> {
     source: S,
     loaded: Option<Vec<LoadedRecord>>,
@@ -49,61 +41,40 @@ impl<S: RecordSource> DatasetEngine<S> {
         }
     }
 
-    /// Configure the number of records between retrieval checkpoints.
     pub fn with_checkpoint_interval(mut self, interval: u64) -> RecordResult<Self> {
         self.set_checkpoint_interval(interval)?;
         Ok(self)
     }
 
-    /// Set the number of records between retrieval checkpoints.
     pub fn set_checkpoint_interval(&mut self, interval: u64) -> RecordResult<()> {
         if interval == 0 {
-            return Err(RecordError::InvalidConfiguration(
-                "checkpoint interval must be greater than zero".into(),
-            ));
+            return Err(RecordError::InvalidConfiguration("checkpoint interval must be greater than zero".into()));
         }
         self.checkpoint_interval = interval;
         Ok(())
     }
 
-    /// Return the configured number of records between retrieval checkpoints.
-    pub fn checkpoint_interval(&self) -> u64 {
-        self.checkpoint_interval
-    }
+    pub fn checkpoint_interval(&self) -> u64 { self.checkpoint_interval }
+    pub fn checkpoints(&self) -> &[Checkpoint] { &self.checkpoints }
 
-    pub fn checkpoints(&self) -> &[Checkpoint] {
-        &self.checkpoints
-    }
-
-    /// Configure the bounded XML preview used by preparation.
     pub fn with_preview_config(mut self, config: PreviewConfig) -> RecordResult<Self> {
         config.validate()?;
         self.preview_config = config;
         Ok(self)
     }
 
-    /// Set the bounded XML preview used by preparation.
     pub fn set_preview_config(&mut self, config: PreviewConfig) -> RecordResult<()> {
         config.validate()?;
         self.preview_config = config;
         Ok(())
     }
 
-    /// Return the current XML preview configuration.
-    pub fn preview_config(&self) -> &PreviewConfig {
-        &self.preview_config
-    }
+    pub fn preview_config(&self) -> &PreviewConfig { &self.preview_config }
 
-    /// Prepare lightweight previews in memory for fast repeated searches.
-    ///
-    /// Previews are bounded by the configured byte target, optional stop element, and child limit.
-    /// Calling this is optional; get() and list() continue to use the source
-    /// directly when preparation has not been requested.
     pub fn prep(&mut self) -> RecordResult<usize> {
         self.prep_with_progress(|_| {})
     }
 
-    /// Prepare lightweight previews while reporting the number of records prepared.
     pub fn prep_with_progress<F>(&mut self, mut progress: F) -> RecordResult<usize>
     where
         F: FnMut(usize),
@@ -119,10 +90,7 @@ impl<S: RecordSource> DatasetEngine<S> {
 
             if count as u64 % self.checkpoint_interval == 0 {
                 if let Some(position) = stream.checkpoint_position() {
-                    checkpoints.push(Checkpoint {
-                        index: count as u64,
-                        position,
-                    });
+                    checkpoints.push(Checkpoint { index: count as u64, position });
                 }
             }
         }
@@ -133,17 +101,8 @@ impl<S: RecordSource> DatasetEngine<S> {
         Ok(count)
     }
 
-    /// Get one complete record by its zero-based record index.
-    ///
-    /// When preparation produced checkpoints and the source supports seeking,
-    /// retrieval starts at the nearest checkpoint.
     pub fn get(&self, index: u64) -> RecordResult<Option<DatasetRecord>> {
-        let checkpoint = self
-            .checkpoints
-            .iter()
-            .rev()
-            .find(|checkpoint| checkpoint.index <= index);
-
+        let checkpoint = self.checkpoints.iter().rev().find(|checkpoint| checkpoint.index <= index);
         let mut stream = match checkpoint {
             Some(checkpoint) => self.source.open_from(checkpoint.position, checkpoint.index)?,
             None => self.source.open()?,
@@ -154,79 +113,50 @@ impl<S: RecordSource> DatasetEngine<S> {
                 return Ok(Some(record));
             }
         }
-
         Ok(None)
     }
 
-    /// Return whether bounded previews are currently prepared in memory.
-    pub fn is_prepared(&self) -> bool {
-        self.loaded.is_some()
-    }
+    pub fn is_prepared(&self) -> bool { self.loaded.is_some() }
+    pub fn prepared_preview_count(&self) -> usize { self.loaded.as_ref().map_or(0, Vec::len) }
 
-    /// Return the number of prepared previews currently held in memory.
-    pub fn prepared_preview_count(&self) -> usize {
-        self.loaded.as_ref().map_or(0, Vec::len)
-    }
-
-    /// Return one prepared preview by zero-based record index.
     pub fn preview_at(&self, index: u64) -> Option<&LoadedRecord> {
-        self.loaded
-            .as_ref()
-            .and_then(|loaded| loaded.iter().find(|record| record.index() == index))
+        self.loaded.as_ref().and_then(|loaded| loaded.iter().find(|record| record.index() == index))
     }
 
-    /// Search only the prepared preview table.
     pub fn search_previews(&self, query: &str, limit: Option<usize>) -> RecordResult<Vec<u64>> {
         let loaded = self.loaded.as_ref().ok_or_else(|| {
-            RecordError::InvalidConfiguration(
-                "preview table is not prepared; run prep() first".into(),
-            )
+            RecordError::InvalidConfiguration("preview table is not prepared; run prep() first".into())
         })?;
-
         if query.is_empty() {
-            return Err(RecordError::InvalidConfiguration(
-                "preview search query cannot be empty".into(),
-            ));
+            return Err(RecordError::InvalidConfiguration("preview search query cannot be empty".into()));
         }
 
         let mut matches = Vec::new();
         for record in loaded {
-            if contains_whole_words(record.as_bytes(), query) {
+            if record.elements().iter().any(|element| contains_whole_words(element.text.as_bytes(), query)) {
                 matches.push(record.index());
                 if let Some(limit) = limit {
-                    if matches.len() >= limit {
-                        break;
-                    }
+                    if matches.len() >= limit { break; }
                 }
             }
         }
-
         Ok(matches)
     }
 
-    /// Release the prepared preview table while retaining retrieval checkpoints.
-    pub fn clear_previews(&mut self) {
-        self.loaded = None;
-    }
+    pub fn clear_previews(&mut self) { self.loaded = None; }
 
-    /// Find against prepared previews when available; otherwise scan the stream.
     pub fn find(&self, query: &str, limit: Option<usize>) -> RecordResult<Vec<u64>> {
         if query.is_empty() {
-            return Err(RecordError::InvalidConfiguration(
-                "find query cannot be empty".into(),
-            ));
+            return Err(RecordError::InvalidConfiguration("find query cannot be empty".into()));
         }
 
         let mut matches = Vec::new();
-
         if let Some(loaded) = &self.loaded {
             for record in loaded {
-                if contains_whole_words(record.as_bytes(), query) {
+                if record.elements().iter().any(|element| contains_whole_words(element.text.as_bytes(), query)) {
                     matches.push(record.index());
                     if let Some(limit) = limit {
-                        if matches.len() >= limit {
-                            break;
-                        }
+                        if matches.len() >= limit { break; }
                     }
                 }
             }
@@ -238,78 +168,49 @@ impl<S: RecordSource> DatasetEngine<S> {
             if contains_whole_words(record.as_bytes(), query) {
                 matches.push(record.index());
                 if let Some(limit) = limit {
-                    if matches.len() >= limit {
-                        break;
-                    }
+                    if matches.len() >= limit { break; }
                 }
             }
         }
-
         Ok(matches)
     }
 
-    /// List complete records in range, or all records when range is None.
     pub fn list(&self, range: Option<std::ops::Range<u64>>) -> RecordResult<Vec<DatasetRecord>> {
         let mut stream = self.source.open()?;
         let (start, end) = match range {
             Some(range) => (range.start, Some(range.end)),
             None => (0, None),
         };
-
         let mut records = Vec::new();
 
         while let Some(record) = stream.next_record()? {
-            if record.index() < start {
-                continue;
-            }
-
+            if record.index() < start { continue; }
             if let Some(end) = end {
-                if record.index() >= end {
-                    break;
-                }
+                if record.index() >= end { break; }
             }
-
             records.push(record);
         }
-
         Ok(records)
     }
 }
 
-/// Return true when the query occurs as a complete word or phrase in the text.
-///
-/// Matching is case-insensitive. Unicode alphanumeric characters and '_' are
-/// treated as word characters; punctuation and whitespace form boundaries.
 fn contains_whole_words(text: &[u8], query: &str) -> bool {
     let query = query.trim();
-    if query.is_empty() {
-        return false;
-    }
+    if query.is_empty() { return false; }
 
     let text = String::from_utf8_lossy(text).to_lowercase();
     let query = query.to_lowercase();
-
     let mut search_start = 0usize;
+
     while let Some(relative_start) = text[search_start..].find(&query) {
         let start = search_start + relative_start;
         let end = start + query.len();
+        let before_is_word = text[..start].chars().next_back().is_some_and(is_word_character);
+        let after_is_word = text[end..].chars().next().is_some_and(is_word_character);
 
-        let before_is_word = text[..start]
-            .chars()
-            .next_back()
-            .is_some_and(is_word_character);
-        let after_is_word = text[end..]
-            .chars()
-            .next()
-            .is_some_and(is_word_character);
-
-        if !before_is_word && !after_is_word {
-            return true;
-        }
-
+        if !before_is_word && !after_is_word { return true; }
         search_start = start + query.len();
     }
-
     false
 }
 

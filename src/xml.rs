@@ -62,6 +62,11 @@ impl<R: BufRead> XmlRecordStream<R> {
         })
     }
 
+    pub fn with_record_index(mut self, record_index: u64) -> Self {
+        self.record_index = record_index;
+        self
+    }
+
     fn append_event(record: &mut Vec<u8>, event: Event<'_>, max: usize) -> RecordResult<()> {
         Writer::new(&mut *record).write_event(event)?;
 
@@ -115,6 +120,10 @@ impl<R: BufRead> XmlRecordStream<R> {
 }
 
 impl<R: BufRead> RecordStream for XmlRecordStream<R> {
+    fn checkpoint_position(&self) -> Option<u64> {
+        Some(self.reader.buffer_position() as u64)
+    }
+
     fn next_record(&mut self) -> RecordResult<Option<DatasetRecord>> {
         loop {
             self.buffer.clear();

@@ -10,7 +10,7 @@ struct Page {
 #[test]
 fn streams_one_record_at_a_time() {
     let xml = br#"<pages><page><title>First</title></page><page><title>Second</title></page></pages>"#;
-    let mut stream = XmlRecordStream::new(Cursor::new(xml), XmlStreamConfig::new("page")).unwrap();
+    let mut stream = XmlRecordStream::new(Cursor::new(xml.clone()), XmlStreamConfig::new("page")).unwrap();
 
     let first = stream.next_record().unwrap().unwrap();
     assert_eq!(first.index(), 0);
@@ -33,9 +33,97 @@ fn rejects_empty_record_name() {
 fn enforces_record_size_limit() {
     let xml = br#"<root><page><title>oversized</title></page></root>"#;
     let mut stream = XmlRecordStream::new(
-        Cursor::new(xml),
+        Cursor::new(xml.clone()),
         XmlStreamConfig::new("page").with_max_record_bytes(4),
     ).unwrap();
 
     assert!(stream.next_record().is_err());
+}
+
+#[test]
+fn dataset_engine_gets_a_record_by_index() {
+    use dataset_stream_parser_interface::{DatasetEngine, RecordResult};
+
+    let xml = br#"<pages><page><title>First</title></page><page><title>Second</title></page></pages>"#.to_vec();
+    let engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
+        Ok(Box::new(XmlRecordStream::new(
+            Cursor::new(xml.clone()),
+            XmlStreamConfig::new("page"),
+        )?))
+    });
+
+    let record = engine.get(1).unwrap().unwrap();
+    assert_eq!(record.index(), 1);
+    assert_eq!(record.decode::<Page>().unwrap().title.as_deref(), Some("Second"));
+    assert!(engine.get(2).unwrap().is_none());
+}
+
+#[test]
+fn dataset_engine_finds_record_indexes() {
+    use dataset_stream_parser_interface::{DatasetEngine, RecordResult};
+
+    let xml = br#"<pages><page><title>First</title></page><page><title>Second</title></page><page><title>First Again</title></page></pages>"#.to_vec();
+    let engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
+        Ok(Box::new(XmlRecordStream::new(
+            Cursor::new(xml.clone()),
+            XmlStreamConfig::new("page"),
+        )?))
+    });
+
+    assert_eq!(engine.find("First", None).unwrap(), vec![0, 2]);
+    assert_eq!(engine.find("First", Some(1)).unwrap(), vec![0]);
+    assert!(engine.find("", None).is_err());
+}
+
+#[test]
+fn dataset_engine_lists_a_range_or_all_records() {
+    use dataset_stream_parser_interface::{DatasetEngine, RecordResult};
+
+    let xml = br#"<pages><page><title>First</title></page><page><title>Second</title></page><page><title>Third</title></page></pages>"#.to_vec();
+    let engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
+        Ok(Box::new(XmlRecordStream::new(
+            Cursor::new(xml.clone()),
+            XmlStreamConfig::new("page"),
+        )?))
+    });
+
+    let range = engine.list(Some(1..3)).unwrap();
+    assert_eq!(range.iter().map(|record| record.index()).collect::<Vec<_>>(), vec![1, 2]);
+
+    let all = engine.list(None).unwrap();
+    assert_eq!(all.iter().map(|record| record.index()).collect::<Vec<_>>(), vec![0, 1, 2]);
+}
+
+#[test]
+fn dataset_engine_prepares_first_three_child_elements_for_find() {
+    use dataset_stream_parser_interface::{DatasetEngine, RecordResult};
+
+    let xml = br#"<books><book id="bk112"><author>Galos, Mike</author><title>Visual Studio 7</title><genre>Computer</genre><price>49.95</price></book><book id="bk113"><author>Another Author</author><title>Rust</title><genre>Computer</genre><price>39.95</price></book></books>"#.to_vec();
+    let mut engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
+        Ok(Box::new(XmlRecordStream::new(
+            Cursor::new(xml.clone()),
+            XmlStreamConfig::new("book"),
+        )?))
+    });
+
+    assert_eq!(engine.prep().unwrap(), 2);
+    assert_eq!(engine.find("bk112", None).unwrap(), vec![0]);
+    assert_eq!(engine.find("Visual Studio 7", None).unwrap(), vec![0]);
+    assert_eq!(engine.find("49.95", None).unwrap(), Vec::<u64>::new());
+    assert_eq!(engine.find("Another Author", None).unwrap(), vec![1]);
+}
+#[test]
+fn get_still_uses_the_stream_when_not_prepared() {
+    use dataset_stream_parser_interface::{DatasetEngine, RecordResult};
+
+    let xml = br#"<pages><page><title>First</title></page><page><title>Second</title></page>"#.to_vec();
+    let engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
+        Ok(Box::new(XmlRecordStream::new(
+            Cursor::new(xml.clone()),
+            XmlStreamConfig::new("page"),
+        )?))
+    });
+
+    let record = engine.get(1).unwrap().unwrap();
+    assert_eq!(record.decode::<Page>().unwrap().title.as_deref(), Some("Second"));
 }

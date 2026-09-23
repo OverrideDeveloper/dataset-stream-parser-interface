@@ -1,12 +1,64 @@
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
-use quick_xml::writer::Writer;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use std::fmt;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PreviewElement {
+    pub name: String,
+    pub text: String,
+}
+
+impl PreviewElement {
+    fn retained_bytes(&self) -> usize {
+        self.name.len() + self.text.len()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PreviewRecord {
+    pub index: u64,
+    pub elements: Vec<PreviewElement>,
+}
+
+impl PreviewRecord {
+    fn new(index: u64, elements: Vec<PreviewElement>) -> Self {
+        Self { index, elements }
+    }
+
+    pub fn index(&self) -> u64 {
+        self.index
+    }
+
+    pub fn elements(&self) -> &[PreviewElement] {
+        &self.elements
+    }
+
+    pub fn len(&self) -> usize {
+        self.elements
+            .iter()
+            .map(PreviewElement::retained_bytes)
+            .sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.elements.is_empty()
+    }
+
+    pub fn contains_text(&self, query: &str) -> bool {
+        self.elements
+            .iter()
+            .any(|element| element.text.contains(query))
+    }
+}
+
+pub type LoadedRecord = PreviewRecord;
 
 #[derive(Debug, Clone)]
 pub struct PreviewConfig {
-    /// Target preview size in bytes. The child that reaches this target is included.
+    /// Target retained UTF-8 bytes across element names and text.
+    /// The element that reaches this target is included.
     pub target_bytes: usize,
     /// Optional child element name that ends the preview when encountered.
     pub stop_element: Option<String>,
@@ -69,79 +121,73 @@ impl DatasetRecord {
     pub fn is_empty(&self) -> bool { self.bytes.is_empty() }
     pub fn as_bytes(&self) -> &[u8] { &self.bytes }
 
-    /// Build a bounded XML preview from the record start and child elements.
-    pub(crate) fn preview(&self, config: &PreviewConfig) -> RecordResult<LoadedRecord> {
+    /// Build a bounded, schema-neutral text projection from the record.
+    ///
+    /// Each retained top-level child becomes one named text element. Nested
+    /// descendant text is flattened into the containing child, so the preview
+    /// remains useful for search without retaining XML syntax.
+    pub(crate) fn preview(&self, config: &PreviewConfig) -> RecordResult<PreviewRecord> {
         config.validate()?;
 
         let mut reader = Reader::from_reader(self.bytes.as_slice());
         reader.config_mut().trim_text(false);
 
         let mut buffer = Vec::new();
-        let mut preview = Vec::new();
         let mut root_seen = false;
-        let mut child_count = 0usize;
+        let mut elements = Vec::new();
 
         loop {
             buffer.clear();
             match reader.read_event_into(&mut buffer)? {
                 Event::Start(event) if !root_seen => {
-                    let mut writer = Writer::new(&mut preview);
-                    writer.write_event(Event::Start(event.into_owned()))?;
                     root_seen = true;
                 }
-                Event::Start(event) if root_seen && child_count < config.max_children => {
-                    let child_name = event.name().as_ref().to_vec();
-                    let mut depth = 1usize;
-                    let mut writer = Writer::new(&mut preview);
-
-                    loop {
-                        buffer.clear();
-                        let event = reader.read_event_into(&mut buffer)?;
-                        match event {
-                            Event::Start(_) => {
-                                depth += 1;
-                                writer.write_event(event)?;
-                            }
-                            Event::End(_) => {
-                                writer.write_event(event)?;
-                                depth -= 1;
-                                if depth == 0 {
-                                    break;
-                                }
-                            }
-                            Event::Eof => {
-                                return Err(RecordError::InvalidConfiguration(
-                                    "unexpected end of input while building record preview".into(),
-                                ));
-                            }
-                            _ => writer.write_event(event)?,
-                        }
-                    }
-
-                    child_count += 1;
-                    let reached_target = preview.len() >= config.target_bytes;
+                Event::Start(event) if root_seen && elements.len() < config.max_children => {
+                    let child_name = String::from_utf8_lossy(event.name().as_ref()).into_owned();
+                    let text = collect_element_text(&mut reader, &mut buffer)?;
+                    let element = PreviewElement {
+                        name: child_name.clone(),
+                        text,
+                    };
+                    let reached_target =
+                        elements.iter().map(PreviewElement::retained_bytes).sum::<usize>()
+                            + element.retained_bytes()
+                            >= config.target_bytes;
                     let reached_stop_element = config
                         .stop_element
                         .as_deref()
-                        .is_some_and(|name| name.as_bytes() == child_name.as_slice());
+                        .is_some_and(|name| name == child_name);
 
-                    if reached_target || reached_stop_element || child_count >= config.max_children {
+                    elements.push(element);
+
+                    if reached_target
+                        || reached_stop_element
+                        || elements.len() >= config.max_children
+                    {
                         break;
                     }
                 }
-                Event::Empty(event) if root_seen && child_count < config.max_children => {
-                    let child_name = event.name().as_ref().to_vec();
-                    let mut writer = Writer::new(&mut preview);
-                    writer.write_event(Event::Empty(event.into_owned()))?;
-                    child_count += 1;
-
-                    let reached_target = preview.len() >= config.target_bytes;
+                Event::Empty(event) if root_seen && elements.len() < config.max_children => {
+                    let child_name = String::from_utf8_lossy(event.name().as_ref()).into_owned();
+                    let element = PreviewElement {
+                        name: child_name.clone(),
+                        text: String::new(),
+                    };
+                    let reached_target =
+                        elements.iter().map(PreviewElement::retained_bytes).sum::<usize>()
+                            + element.retained_bytes()
+                            >= config.target_bytes;
                     let reached_stop_element = config
                         .stop_element
                         .as_deref()
-                        .is_some_and(|name| name.as_bytes() == child_name.as_slice());
+                        .is_some_and(|name| name == child_name);
 
-                    if reached_target || reached_stop_element || child_count >= config.max_children {
+                    elements.push(element);
+
+                    if reached_target
+                        || reached_stop_element
+                        || elements.len() >= config.max_children
+                    {
                         break;
                     }
                 }
@@ -150,7 +196,7 @@ impl DatasetRecord {
             }
         }
 
-        Ok(LoadedRecord::new(self.index, preview))
+        Ok(PreviewRecord::new(self.index, elements))
     }
 
     pub fn decode<T: DeserializeOwned>(&self) -> RecordResult<T> {
@@ -158,21 +204,40 @@ impl DatasetRecord {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct LoadedRecord {
-    index: u64,
-    content: Vec<u8>,
-}
+fn collect_element_text(
+    reader: &mut Reader<&[u8]>,
+    buffer: &mut Vec<u8>,
+) -> RecordResult<String> {
+    let mut depth = 1usize;
+    let mut text = String::new();
 
-impl LoadedRecord {
-    fn new(index: u64, content: Vec<u8>) -> Self {
-        Self { index, content }
+    loop {
+        buffer.clear();
+        match reader.read_event_into(buffer)? {
+            Event::Start(_) => depth += 1,
+            Event::End(_) => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            Event::Text(event) => {
+                text.push_str(&String::from_utf8_lossy(event.as_ref()));
+            }
+            Event::CData(event) => {
+                text.push_str(&String::from_utf8_lossy(event.as_ref()));
+            }
+            Event::Empty(_) => {}
+            Event::Eof => {
+                return Err(RecordError::InvalidConfiguration(
+                    "unexpected end of input while building record preview".into(),
+                ));
+            }
+            _ => {}
+        }
     }
 
-    pub fn index(&self) -> u64 { self.index }
-    pub fn as_bytes(&self) -> &[u8] { &self.content }
-    pub fn len(&self) -> usize { self.content.len() }
-    pub fn is_empty(&self) -> bool { self.content.is_empty() }
+    Ok(text)
 }
 
 pub trait RecordDecoder<T> {
@@ -214,15 +279,27 @@ impl From<quick_xml::Error> for RecordError {
 
 pub type RecordResult<T> = Result<T, RecordError>;
 
-
 #[cfg(test)]
 mod tests {
     use super::{DatasetRecord, PreviewConfig};
 
-    fn preview(xml: &str, config: PreviewConfig) -> String {
+    fn preview(xml: &str, config: PreviewConfig) -> super::PreviewRecord {
         let record = DatasetRecord::new(0, xml.as_bytes().to_vec());
-        let loaded = record.preview(&config).unwrap();
-        String::from_utf8(loaded.as_bytes().to_vec()).unwrap()
+        record.preview(&config).unwrap()
+    }
+
+    #[test]
+    fn preview_projects_named_child_text() {
+        let config = PreviewConfig::new(4096, 10);
+        let result = preview(
+            "<article><author><name>Alice</name></author><title>Important title</title></article>",
+            config,
+        );
+
+        assert_eq!(result.elements[0].name, "author");
+        assert_eq!(result.elements[0].text, "Alice");
+        assert_eq!(result.elements[1].name, "title");
+        assert_eq!(result.elements[1].text, "Important title");
     }
 
     #[test]
@@ -233,8 +310,9 @@ mod tests {
             config,
         );
 
-        assert!(result.contains("<a>one</a>"));
-        assert!(!result.contains("<c>three</c>"));
+        assert_eq!(result.elements.len(), 2);
+        assert_eq!(result.elements[0].text, "one");
+        assert_eq!(result.elements[1].text, "two");
     }
 
     #[test]
@@ -245,8 +323,9 @@ mod tests {
             config,
         );
 
-        assert!(result.contains("<title>Important title</title>"));
-        assert!(!result.contains("<year>2026</year>"));
+        assert_eq!(result.elements.last().unwrap().name, "title");
+        assert_eq!(result.elements.last().unwrap().text, "Important title");
+        assert!(!result.elements.iter().any(|element| element.name == "year"));
     }
 
     #[test]
@@ -257,20 +336,30 @@ mod tests {
             config,
         );
 
-        assert!(result.contains("<a>one</a>"));
-        assert!(result.contains("<b>two</b>"));
-        assert!(!result.contains("<c>three</c>"));
+        assert_eq!(result.elements.len(), 2);
+        assert_eq!(result.elements[0].text, "one");
+        assert_eq!(result.elements[1].text, "two");
     }
 
     #[test]
-    fn preview_keeps_nested_child_element_intact() {
+    fn preview_flattens_nested_text() {
         let config = PreviewConfig::new(4096, 1);
         let result = preview(
-            "<article><author><name>Alice</name></author><title>Title</title></article>",
+            "<article><author><name>Alice</name><orcid>123</orcid></author><title>Title</title></article>",
             config,
         );
 
-        assert!(result.contains("<author><name>Alice</name></author>"));
-        assert!(!result.contains("<title>Title</title>"));
+        assert_eq!(result.elements.len(), 1);
+        assert_eq!(result.elements[0].name, "author");
+        assert_eq!(result.elements[0].text, "Alice123");
+    }
+
+    #[test]
+    fn preview_handles_empty_child() {
+        let config = PreviewConfig::new(4096, 2);
+        let result = preview("<article><author/><title>Title</title></article>", config);
+
+        assert_eq!(result.elements[0].name, "author");
+        assert!(result.elements[0].text.is_empty());
     }
 }

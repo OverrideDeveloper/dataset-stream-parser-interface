@@ -230,8 +230,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Sample previews:");
                     for index in 0..sample_count {
                         if let Some(record) = engine.preview_at(index as u64) {
-                            println!("#{} ({} bytes):", record.index(), record.len());
-                            println!("{}", String::from_utf8_lossy(record.as_bytes()));
+                            print_preview(record);
                         }
                     }
                 }
@@ -240,10 +239,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             match value.parse::<u64>() {
                 Ok(index) => match engine.preview_at(index) {
-                    Some(record) => {
-                        println!("#{} ({} bytes):", record.index(), record.len());
-                        println!("{}", String::from_utf8_lossy(record.as_bytes()));
-                    }
+                    Some(record) => print_preview(record),
                     None => println!("preview for record #{index} not found"),
                 },
                 Err(_) => eprintln!("usage: showpreptable [index]"),

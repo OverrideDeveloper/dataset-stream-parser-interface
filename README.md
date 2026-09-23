@@ -127,8 +127,6 @@ The preview table is an explicit working set. `search_previews()` never scans th
 
 `find()` returns indexes rather than records so discovery and retrieval remain separate concerns: find where, then get what. When the source supports seeking, `get()` uses the nearest prepared checkpoint; non-seekable sources safely fall back to streaming from the beginning. The CLI can seek ordinary XML files; bzip2 multistream input remains sequential because its decompressed positions are not directly seekable.
 
-## Current scope
-
 The preview representation is intentionally an ordinary serializable Rust structure so a persistent index format can be added later without changing the search model.
 
 ## Current scope

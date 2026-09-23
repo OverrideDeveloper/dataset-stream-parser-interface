@@ -1,6 +1,6 @@
 use bzip2::bufread::MultiBzDecoder;
 use dataset_stream_parser_interface::{
-    DatasetEngine, RecordStream, XmlRecordStream, XmlStreamConfig,
+    DatasetEngine, PreviewRecord, RecordStream, XmlRecordStream, XmlStreamConfig,
 };
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Seek, Write};
@@ -86,9 +86,9 @@ fn print_record(record: &dataset_stream_parser_interface::DatasetRecord) {
     println!("{}", String::from_utf8_lossy(record.as_bytes()));
 }
 
-fn print_help() {
+fn print_preview(record: &PreviewRecord) {\n    println!("#{} ({} bytes):", record.index(), record.len());\n    for element in record.elements() {\n        println!("  <{}>: {}", element.name, element.text);\n    }\n}\n\nfn print_help() {
     println!("Commands:");
-    println!("  prep [interval]       Prepare previews; optionally set checkpoint spacing");
+    println!("  prep [interval]       Prepare named-text previews; optionally set checkpoint spacing");
     println!("  showpreptable [index] Show prepared preview metadata or one preview");
     println!("  searchpreptable <text> [limit] Search only the prepared preview table");
     println!("  clearpreptable        Release the prepared preview table");
@@ -183,7 +183,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Checkpoint interval: {interval} records");
             }
 
-            println!("Preparing bounded XML previews (target 4 KiB, stop at <title>, max 10 children)...");
+            println!("Preparing bounded named-text previews (target 4 KiB, stop at <title>, max 10 children)...");
             let result = engine.prep_with_progress(|count| {
                 if count % 10_000 == 0 {
                     print!("\rPrepared {count} records...");

@@ -36,7 +36,7 @@ impl<S: RecordSource> DatasetEngine<S> {
             source,
             loaded: None,
             checkpoints: Vec::new(),
-            checkpoint_interval: 1_000,
+            checkpoint_interval: 100,
             preview_config: PreviewConfig::default(),
         }
     }
@@ -155,7 +155,7 @@ impl<S: RecordSource> DatasetEngine<S> {
             RecordError::InvalidConfiguration("preview table is not prepared; run prep() first".into())
         })?;
         if query.is_empty() {
-            return Err(RecordError::InvalidConfiguration("preview search query cannot be empty".into()));
+            return Err(RecordError::InvalidConfiguration("query cannot be empty".into()));
         }
 
         let mut matches = Vec::new();
@@ -247,6 +247,21 @@ fn is_word_character(character: char) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn new_uses_100_record_checkpoint_default() {
+        use crate::{DatasetEngine, RecordResult, RecordStream};
+        use std::io::Cursor;
+
+        let engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
+            Ok(Box::new(crate::XmlRecordStream::new(
+                Cursor::new(br#"<pages><page><title>First</title></page></pages>"#.to_vec()),
+                crate::XmlStreamConfig::new("page"),
+            )?))
+        });
+
+        assert_eq!(engine.checkpoint_interval(), 100);
+    }
+
     #[test]
     fn search_previews_returns_bounded_records_with_indexes() {
         use crate::{DatasetEngine, RecordResult, RecordStream, XmlRecordStream, XmlStreamConfig};

@@ -111,7 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("  prepared: {}", state.is_prepared());
     println!("  startup preparation: {}", if prep { "enabled" } else { "disabled" });
 
-    for request in server.incoming_requests() {
+    for mut request in server.incoming_requests() {
         let method = request.method().as_str().to_string();
         let url = request.url().to_string();
 

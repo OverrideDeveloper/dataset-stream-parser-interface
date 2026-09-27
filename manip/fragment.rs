@@ -286,7 +286,7 @@ mod tests {
         let result = getfragment(
             &record("<article><a>target</a><b>two</b><c>three</c></article>"),
             "target",
-            30,
+            31,
         )
         .unwrap()
         .unwrap();

@@ -98,6 +98,7 @@ fn print_help() {
     println!("  prep [interval]       Prepare named-text previews; optionally set checkpoint spacing");
     println!("  showpreptable [index] Show prepared preview metadata or one preview");
     println!("  searchpreptable <text> [limit] Search only the prepared preview table");
+    println!("  spotonpreptable <text> [limit] Search and display matching previews");
     println!("  clearpreptable        Release the prepared preview table");
     println!("  find <text> [limit]   Find whole-word/phrase matches");
     println!("  get <index>           Retrieve one record by index");
@@ -253,7 +254,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             };
 
-            match engine.search_previews(query, limit) {
+            match engine.search_preview_indexes(query, limit) {
                 Ok(matches) => println!("{matches:?}"),
                 Err(error) => eprintln!("error: {error:?}"),
             }
@@ -262,6 +263,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if command == "searchpreptable" {
             eprintln!("usage: searchpreptable <text> [limit]");
+            continue;
+        }
+
+        if let Some(rest) = command.strip_prefix("spotonpreptable ") {
+            let Some((query, limit)) = parse_search_args(rest) else {
+                eprintln!("usage: spotonpreptable <text> [limit]");
+                continue;
+            };
+
+            match engine.search_previews(query, limit) {
+                Ok(matches) => {
+                    for record in &matches {
+                        print_preview(record);
+                    }
+                }
+                Err(error) => eprintln!("error: {error:?}"),
+            }
+            continue;
+        }
+
+        if command == "spotonpreptable" {
+            eprintln!("usage: spotonpreptable <text> [limit]");
             continue;
         }
 

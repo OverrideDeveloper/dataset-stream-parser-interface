@@ -19,23 +19,26 @@ The API deliberately stays below Alice and above the dataset engine:
         v
     dataset
 
-The HTTP layer does not perform dataset preparation. Run `prep` with the existing CLI first, then start the API against the same dataset.
+The HTTP layer does not expose a preparation endpoint. Because `prep()` is an in-memory engine operation, the standalone API process can optionally perform preparation once at startup.
 
 ## Run
 
 From the repository root:
 
-    cargo run --manifest-path web/api/Cargo.toml -- C:\\data\\Examples\\dblp.xml dblp article 127.0.0.1:60005
+    cargo run --manifest-path web/api/Cargo.toml -- C:\\data\\Examples\\dblp.xml dblp article 127.0.0.1:60005 --prep
 
 Arguments:
 
-    <dataset.xml|dataset.xml.bz2> [corpus] [record-element] [bind]
+    <dataset.xml|dataset.xml.bz2> [corpus] [record-element] [bind] [--prep]
 
 Defaults:
 
 - corpus: `dblp`
 - record element: `page`
 - bind address: `127.0.0.1:60005`
+- startup preparation: disabled
+
+`--prep` explicitly prepares the bounded preview table before the server begins accepting requests. Without it, status reports `prepared: false` and preview search returns `corpus_not_prepared`.
 
 The server is intentionally local-only by default.
 
@@ -121,7 +124,7 @@ This is intentionally a local dataset service, not a general web application.
 
 It does not:
 
-- initiate `prep()`;
+- expose a prep endpoint;
 - parse dataset-specific schemas;
 - perform semantic search;
 - interpret records;

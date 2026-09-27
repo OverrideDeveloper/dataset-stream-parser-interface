@@ -2,6 +2,7 @@ use bzip2::bufread::MultiBzDecoder;
 use dataset_stream_parser_interface::{
     DatasetEngine, PreviewRecord, RecordStream, XmlRecordStream, XmlStreamConfig,
 };
+use dataset_stream_parser_interface::manip::{getfragment, searchtogetfragment};
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Seek, Write};
@@ -156,6 +157,8 @@ fn print_help() {
     println!("  clearpreptable        Release the prepared preview table");
     println!("  find <text> [limit]   Find whole-word/phrase matches");
     println!("  get <index>           Retrieve one record by index");
+    println!("  getfragment <index> <text> [max-bytes]  Extract bounded evidence around a match");
+    println!("  searchtogetfragment <text> [record-limit] [max-bytes]  Search and extract bounded evidence");
     println!("  list <start>..<end>   List a half-open range, e.g. list 0..10");
     println!("  list *                List every record (use with care)");
     println!("  help                  Show this help");
@@ -418,6 +421,92 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             match engine.find(query, limit) {
                 Ok(matches) => println!("{matches:?}"),
+                Err(error) => eprintln!("error: {error:?}"),
+            }
+            continue;
+        }
+
+        if let Some(rest) = command.strip_prefix("getfragment ") {
+            let mut parts = rest.trim().splitn(2, ' ');
+            let Some(index_text) = parts.next() else {
+                eprintln!("usage: getfragment <index> <text> [max-bytes]");
+                continue;
+            };
+            let Some(query_and_limit) = parts.next() else {
+                eprintln!("usage: getfragment <index> <text> [max-bytes]");
+                continue;
+            };
+
+            let Ok(index) = index_text.parse::<u64>() else {
+                eprintln!("usage: getfragment <index> <text> [max-bytes]");
+                continue;
+            };
+
+            let (query, limit) = match parse_search_args(query_and_limit) {
+                Some((query, limit)) => (query, limit.unwrap_or(4096)),
+                None => {
+                    eprintln!("usage: getfragment <index> <text> [max-bytes]");
+                    continue;
+                }
+            };
+
+            match engine.get(index) {
+                Ok(Some(record)) => match getfragment(&record, query, limit) {
+                    Ok(Some(fragment)) => {
+                        println!("#{} ({} bytes):", fragment.index, fragment.record.len());
+                        println!("{}", fragment.record);
+                    }
+                    Ok(None) => println!("no match for query in record #{index}"),
+                    Err(error) => eprintln!("error: {error:?}"),
+                },
+                Ok(None) => println!("record #{index} not found"),
+                Err(error) => eprintln!("error: {error:?}"),
+            }
+            continue;
+        }
+
+        if let Some(rest) = command.strip_prefix("searchtogetfragment ") {
+            let value = rest.trim();
+            if value.is_empty() {
+                eprintln!("usage: searchtogetfragment <text> [record-limit] [max-bytes]");
+                continue;
+            }
+
+            let mut parts = value.split_whitespace().collect::<Vec<_>>();
+            let mut numeric_suffix = Vec::new();
+
+            while let Some(last) = parts.last().and_then(|value| value.parse::<usize>().ok()) {
+                numeric_suffix.push(last);
+                parts.pop();
+                if numeric_suffix.len() == 2 {
+                    break;
+                }
+            }
+
+            let (record_limit, max_bytes) = match numeric_suffix.as_slice() {
+                [limit] => (Some(*limit), None),
+                [max_bytes, record_limit] => (Some(*record_limit), Some(*max_bytes)),
+                [] => (None, None),
+                _ => unreachable!(),
+            };
+
+            let query = parts.join(" ").trim_matches('"').trim().to_string();
+            if query.is_empty() {
+                eprintln!("usage: searchtogetfragment <text> [record-limit] [max-bytes]");
+                continue;
+            }
+
+            match searchtogetfragment(&engine, &query, record_limit, max_bytes) {
+                Ok(matches) => {
+                    if matches.is_empty() {
+                        println!("no fragments found for query: {query}");
+                    } else {
+                        for fragment in &matches {
+                            println!("#{} ({} bytes):", fragment.index, fragment.record.len());
+                            println!("{}", fragment.record);
+                        }
+                    }
+                }
                 Err(error) => eprintln!("error: {error:?}"),
             }
             continue;

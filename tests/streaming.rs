@@ -95,7 +95,7 @@ fn dataset_engine_lists_a_range_or_all_records() {
 }
 
 #[test]
-fn dataset_engine_prepares_first_three_child_elements_for_find() {
+fn dataset_engine_finds_with_prepared_text_projection() {
     use dataset_stream_parser_interface::{DatasetEngine, RecordResult};
 
     let xml = br#"<books><book id="bk112"><author>Galos, Mike</author><title>Visual Studio 7</title><genre>Computer</genre><price>49.95</price></book><book id="bk113"><author>Another Author</author><title>Rust</title><genre>Computer</genre><price>39.95</price></book></books>"#.to_vec();
@@ -107,9 +107,9 @@ fn dataset_engine_prepares_first_three_child_elements_for_find() {
     });
 
     assert_eq!(engine.prep().unwrap(), 2);
-    assert_eq!(engine.find("bk112", None).unwrap(), vec![0]);
+    assert_eq!(engine.find("bk112", None).unwrap(), Vec::<u64>::new());
     assert_eq!(engine.find("Visual Studio 7", None).unwrap(), vec![0]);
-    assert_eq!(engine.find("49.95", None).unwrap(), Vec::<u64>::new());
+    assert_eq!(engine.find("Computer", None).unwrap(), Vec::<u64>::new());
     assert_eq!(engine.find("Another Author", None).unwrap(), vec![1]);
 }
 #[test]

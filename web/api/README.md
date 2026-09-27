@@ -97,6 +97,48 @@ Response:
 
 The `record` value is the authoritative serialized dataset record returned by `DatasetEngine::get()`.
 
+### Find bounded evidence
+
+    POST /local_data/findevidence
+    Content-Type: application/json
+
+    {
+      "corpus": "dblp",
+      "query": "Algebraic Systems",
+      "record_limit": 5,
+      "max_bytes": 512
+    }
+
+Response:
+
+    {
+      "corpus": "dblp",
+      "query": "Algebraic Systems",
+      "results": [
+        {
+          "index": 24980,
+          "record": "<author>: Candan Gdc\\n<title>: On Non-Hermitian Positive (Semi)Definite Linear Algebraic Systems..."
+        }
+      ]
+    }
+
+This endpoint searches the prepared preview table, retrieves matching authoritative records, and extracts bounded evidence from each record. `record_limit` defaults to 5 and `max_bytes` defaults to 512. The evidence extraction is performed by the shared manipulation layer; the HTTP API does not implement the extraction rules itself.
+
+### Get bounded evidence from one record
+
+    GET /local_data/getevidence?corpus=dblp&i=24980&query=Algebraic%20Systems&max_bytes=512
+
+Response:
+
+    {
+      "corpus": "dblp",
+      "query": "Algebraic Systems",
+      "index": 24980,
+      "record": "<author>: Candan Gdc\\n<title>: On Non-Hermitian Positive (Semi)Definite Linear Algebraic Systems..."
+    }
+
+`getevidence` retrieves the authoritative record by index and applies the same bounded evidence extraction used by the manipulation layer. `max_bytes` defaults to 512.
+
 ## Error contract
 
 | Condition | HTTP | code |
@@ -107,6 +149,7 @@ The `record` value is the authoritative serialized dataset record returned by `D
 | endpoint not found | 404 | `not_found` |
 | corpus not prepared | 409 | `corpus_not_prepared` |
 | missing record | 404 | `record_not_found` |
+| evidence not found in record | 404 | `evidence_not_found` |
 | unexpected engine failure | 500 | `internal_error` |
 
 Errors have this shape:

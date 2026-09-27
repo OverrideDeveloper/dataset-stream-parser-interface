@@ -77,29 +77,46 @@ fn respond(request: &mut tiny_http_dh::Request, status: u16, body: String) {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = std::env::args();
-    let program = args.next().unwrap_or_else(|| "dataset-stream-parser-api".into());
-    let path = args.next().ok_or_else(|| {
-        format!("usage: {program} <dataset.xml|dataset.xml.bz2> [corpus] [record-element] [bind]")
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let program = "dataset-stream-parser-api";
+    let prep = args.iter().any(|arg| arg == "--prep");
+    args.retain(|arg| arg != "--prep");
+
+    let path = args.first().ok_or_else(|| {
+        format!("usage: {program} <dataset.xml|dataset.xml.bz2> [corpus] [record-element] [bind] [--prep]")
     })?;
-    let corpus = args.next().unwrap_or_else(|| "dblp".into());
-    let record_element = args.next().unwrap_or_else(|| "page".into());
-    let bind = args.next().unwrap_or_else(|| "127.0.0.1:60005".into());
+    let corpus = args.get(1).cloned().unwrap_or_else(|| "dblp".into());
+    let record_element = args.get(2).cloned().unwrap_or_else(|| "page".into());
+    let bind = args.get(3).cloned().unwrap_or_else(|| "127.0.0.1:60005".into());
 
     let source = FileRecordSource {
         path: path.clone(),
         record_element: record_element.clone(),
     };
-    let engine = DatasetEngine::new(source);
-    let state = engine_from_source(corpus.clone(), engine);
+    let mut engine = DatasetEngine::new(source);
 
+    if prep {
+        println!("Preparing bounded named-text previews...");
+        let count = engine.prep_with_progress(|count| {
+            if count % 10_000 == 0 {
+                print!("\rPrepared {count} records...");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+            }
+        })?;
+        println!("\rPrepared {count} records.");
+        println!("Search cache ready.");
+    }
+
+    let state = engine_from_source(corpus.clone(), engine);
     let server = Server::http(&bind)?;
+
     println!("Dataset HTTP API");
     println!("  dataset: {path}");
     println!("  corpus:  {corpus}");
     println!("  record:  <{record_element}>");
     println!("  listen:  http://{bind}");
-    println!("  preparation: run 'prep' through the dataset CLI before starting this server");
+    println!("  prepared: {}", state.is_prepared());
+    println!("  startup preparation: {}", if prep { "enabled" } else { "disabled" });
 
     for mut request in server.incoming_requests() {
         let method = request.method().as_str().to_string();

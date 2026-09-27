@@ -371,9 +371,9 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&response.body).unwrap();
         assert_eq!(value["corpus"], "dblp");
         assert_eq!(value["query"], "algebraic system");
-        assert_eq!(value["results"][0]["index"], 0);
+        assert_eq!(value["index"], 0);
         assert_eq!(
-            value["results"][0]["record"],
+            value["record"],
             "<author>: Alice\n<title>: First Algebraic System\n<year>: 2026"
         );
     }

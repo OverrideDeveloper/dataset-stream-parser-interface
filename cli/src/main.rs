@@ -2,19 +2,41 @@ use bzip2::bufread::MultiBzDecoder;
 use dataset_stream_parser_interface::{
     DatasetEngine, PreviewRecord, RecordStream, XmlRecordStream, XmlStreamConfig,
 };
+use std::cell::RefCell;
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Seek, Write};
+use std::io::{self, BufRead, BufReader, Read, Seek, Write};
 
 struct FileRecordSource {
     path: String,
     record_element: String,
+    save_path: RefCell<Option<String>>,
+}
+
+struct TeeReader<R, W> {
+    reader: R,
+    writer: W,
+}
+
+impl<R: Read, W: Write> Read for TeeReader<R, W> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let count = self.reader.read(buffer)?;
+        if count > 0 {
+            self.writer.write_all(&buffer[..count])?;
+        }
+        Ok(count)
+    }
 }
 
 impl FileRecordSource {
+    fn set_save_path(&self, path: String) {
+        *self.save_path.borrow_mut() = Some(path);
+    }
+
     fn open_input(
         &self,
         position: Option<u64>,
         record_index: u64,
+        allow_save: bool,
     ) -> Result<Box<dyn RecordStream>, Box<dyn std::error::Error>> {
         let mut file = File::open(&self.path)?;
         let compressed = self.path.to_ascii_lowercase().ends_with(".bz2");
@@ -31,7 +53,21 @@ impl FileRecordSource {
         }
 
         let input: Box<dyn BufRead> = if compressed {
-            Box::new(BufReader::new(MultiBzDecoder::new(BufReader::new(file))))
+            let decoder = MultiBzDecoder::new(BufReader::new(file));
+            if allow_save {
+                if let Some(save_path) = self.save_path.borrow_mut().take() {
+                    let partial_path = format!("{save_path}.partial");
+                    let output = File::create(partial_path)?;
+                    Box::new(BufReader::new(TeeReader {
+                        reader: decoder,
+                        writer: output,
+                    }))
+                } else {
+                    Box::new(BufReader::new(decoder))
+                }
+            } else {
+                Box::new(BufReader::new(decoder))
+            }
         } else {
             Box::new(BufReader::new(file))
         };
@@ -45,7 +81,7 @@ impl FileRecordSource {
 
 impl dataset_stream_parser_interface::RecordSource for FileRecordSource {
     fn open(&self) -> dataset_stream_parser_interface::RecordResult<Box<dyn RecordStream>> {
-        self.open_input(None, 0).map_err(|error| {
+        self.open_input(None, 0, true).map_err(|error| {
             dataset_stream_parser_interface::RecordError::Io(std::io::Error::other(error.to_string()))
         })
     }
@@ -55,7 +91,7 @@ impl dataset_stream_parser_interface::RecordSource for FileRecordSource {
         position: u64,
         record_index: u64,
     ) -> dataset_stream_parser_interface::RecordResult<Box<dyn RecordStream>> {
-        self.open_input(Some(position), record_index).map_err(|error| {
+        self.open_input(Some(position), record_index, false).map_err(|error| {
             dataset_stream_parser_interface::RecordError::Io(std::io::Error::other(error.to_string()))
         })
     }
@@ -81,6 +117,10 @@ fn open_source(
     )?))
 }
 
+fn configure_save(source: &FileRecordSource, path: &str) {
+    source.set_save_path(path.to_string());
+}
+
 fn print_record(record: &dataset_stream_parser_interface::DatasetRecord) {
     println!("#{}:", record.index());
     println!("{}", String::from_utf8_lossy(record.as_bytes()));
@@ -95,7 +135,7 @@ fn print_preview(record: &PreviewRecord) {
 
 fn print_help() {
     println!("Commands:");
-    println!("  prep [interval]       Prepare named-text previews; optionally set checkpoint spacing");
+    println!("  prep [interval] [--save] Prepare previews; optionally set checkpoint spacing and save a decompressed .bz2 corpus");
     println!("  showpreptable [index] Show prepared preview metadata or one preview");
     println!("  searchpreptable <text> [limit] Search only the prepared preview table");
     println!("  spotonpreptable <text> [limit] Search and display matching previews");
@@ -137,10 +177,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     let record_element = args.next().unwrap_or_else(|| "page".into());
 
-    let mut engine = DatasetEngine::new(FileRecordSource {
+    let source = FileRecordSource {
         path: path.clone(),
         record_element: record_element.clone(),
-    });
+        save_path: RefCell::new(None),
+    };
+    let mut engine = DatasetEngine::new(&source);
 
     println!("Dataset CLI");
     println!("  dataset: {path}");
@@ -174,14 +216,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if command == "prep" || command.starts_with("prep ") {
-            let interval = command
-                .strip_prefix("prep ")
-                .and_then(|value| value.trim().parse::<u64>().ok());
+            let mut interval = None;
+            let mut save = false;
+            let mut invalid = false;
 
-            if command != "prep" && interval.is_none() {
-                eprintln!("usage: prep [interval]");
+            for value in command
+                .strip_prefix("prep")
+                .unwrap_or("")
+                .split_whitespace()
+            {
+                if value == "--save" {
+                    save = true;
+                } else if interval.is_none() {
+                    interval = value.parse::<u64>().ok();
+                    if interval.is_none() {
+                        invalid = true;
+                    }
+                } else {
+                    invalid = true;
+                }
+            }
+
+            if invalid {
+                eprintln!("usage: prep [interval] [--save]");
                 continue;
             }
+
+            if save && !path.to_ascii_lowercase().ends_with(".bz2") {
+                eprintln!("error: --save is only valid for .bz2 datasets");
+                continue;
+            }
+
+            let save_path = if save {
+                let target = path[..path.len() - 4].to_string();
+                let partial = format!("{target}.partial");
+
+                if std::path::Path::new(&target).exists() {
+                    eprintln!("error: save target already exists: {target}");
+                    continue;
+                }
+                if std::path::Path::new(&partial).exists() {
+                    eprintln!("error: partial save already exists: {partial}");
+                    continue;
+                }
+
+                Some(target)
+            } else {
+                None
+            };
 
             if let Some(interval) = interval {
                 if let Err(error) = engine.set_checkpoint_interval(interval) {
@@ -189,6 +271,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     continue;
                 }
                 println!("Checkpoint interval: {interval} records");
+            }
+
+            if let Some(target) = &save_path {
+                configure_save(&source, target);
+                println!("Saving decompressed corpus to: {target}");
             }
 
             println!("Preparing bounded named-text previews (target 4 KiB, stop at <title>, max 10 children)...");
@@ -201,10 +288,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             match result {
                 Ok(count) => {
+                    if let Some(target) = save_path {
+                        let partial = format!("{target}.partial");
+                        std::fs::rename(&partial, &target)?;
+                        println!("Decompressed corpus saved: {target}");
+                    }
                     print!("\rPrepared {count} records.\n");
                     println!("Search cache ready.");
                 }
-                Err(error) => eprintln!("\nerror: {error:?}"),
+                Err(error) => {
+                    if let Some(target) = save_path {
+                        let partial = format!("{target}.partial");
+                        let _ = std::fs::remove_file(partial);
+                    }
+                    eprintln!("\nerror: {error:?}");
+                }
             }
             continue;
         }

@@ -53,6 +53,14 @@ struct EvidenceResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct EvidenceRecordResponse {
+    corpus: String,
+    query: String,
+    index: u64,
+    record: String,
+}
+
+#[derive(Debug, Serialize)]
 struct StatusResponse {
     corpus: String,
     prepared: bool,
@@ -252,13 +260,11 @@ impl<S: RecordSource> ApiState<S> {
 
         match self.engine.get(index) {
             Ok(Some(record)) => match getfragment(&record, &query, max_bytes.unwrap_or(512)) {
-                Ok(Some(fragment)) => json_response(200, &EvidenceResponse {
+                Ok(Some(fragment)) => json_response(200, &EvidenceRecordResponse {
                     corpus: self.corpus.clone(),
                     query,
-                    results: vec![EvidenceResult {
-                        index: fragment.index,
-                        record: fragment.record,
-                    }],
+                    index: fragment.index,
+                    record: fragment.record,
                 }),
                 Ok(None) => error_response(
                     404,

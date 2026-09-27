@@ -109,7 +109,7 @@ fn dataset_engine_finds_with_prepared_text_projection() {
     assert_eq!(engine.prep().unwrap(), 2);
     assert_eq!(engine.find("bk112", None).unwrap(), Vec::<u64>::new());
     assert_eq!(engine.find("Visual Studio 7", None).unwrap(), vec![0]);
-    assert_eq!(engine.find("49.95", None).unwrap(), vec![0]);
+    assert_eq!(engine.find("Computer", None).unwrap(), Vec::<u64>::new());
     assert_eq!(engine.find("Another Author", None).unwrap(), vec![1]);
 }
 #[test]

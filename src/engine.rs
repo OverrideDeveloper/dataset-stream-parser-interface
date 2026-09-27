@@ -249,7 +249,7 @@ fn is_word_character(character: char) -> bool {
 mod tests {
     #[test]
     fn search_previews_returns_bounded_records_with_indexes() {
-        use crate::{DatasetEngine, RecordResult, XmlRecordStream, XmlStreamConfig};
+        use crate::{DatasetEngine, RecordResult, RecordStream, XmlRecordStream, XmlStreamConfig};
         use std::io::Cursor;
 
         let xml = br#"<pages><page><title>First</title></page><page><title>Second</title></page><page><title>First Again</title></page></pages>"#.to_vec();

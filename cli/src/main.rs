@@ -117,6 +117,20 @@ fn open_source(
     )?))
 }
 
+impl dataset_stream_parser_interface::RecordSource for &FileRecordSource {
+    fn open(&self) -> dataset_stream_parser_interface::RecordResult<Box<dyn RecordStream>> {
+        (*self).open()
+    }
+
+    fn open_from(
+        &self,
+        position: u64,
+        record_index: u64,
+    ) -> dataset_stream_parser_interface::RecordResult<Box<dyn RecordStream>> {
+        (*self).open_from(position, record_index)
+    }
+}
+
 fn configure_save(source: &FileRecordSource, path: &str) {
     source.set_save_path(path.to_string());
 }

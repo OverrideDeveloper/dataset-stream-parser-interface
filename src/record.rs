@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn preview_stops_at_target_size() {
-        let config = PreviewConfig::new(24, 10);
+        let config = PreviewConfig::new(8, 10);
         let result = preview(
             "<article><a>one</a><b>two</b><c>three</c></article>",
             config,
@@ -317,7 +317,7 @@ mod tests {
 
     #[test]
     fn preview_includes_stop_element() {
-        let config = PreviewConfig::new(4, 10).with_stop_element("title");
+        let config = PreviewConfig::new(4096, 10).with_stop_element("title");
         let result = preview(
             "<article><author>one</author><author>two</author><title>Important title</title><year>2026</year></article>",
             config,

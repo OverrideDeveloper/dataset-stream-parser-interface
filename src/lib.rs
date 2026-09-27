@@ -1,6 +1,7 @@
 //! Streaming dataset record interfaces.
 
 mod engine;
+#[path = "../manip/mod.rs"]
 pub mod manip;
 mod record;
 pub mod xml;

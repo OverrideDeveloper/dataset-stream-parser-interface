@@ -123,7 +123,11 @@ impl<S: RecordSource> DatasetEngine<S> {
         self.loaded.as_ref().and_then(|loaded| loaded.iter().find(|record| record.index() == index))
     }
 
-    pub fn search_previews(&self, query: &str, limit: Option<usize>) -> RecordResult<Vec<u64>> {
+    /// Search the prepared preview table and return the matching record indexes.
+    ///
+    /// This is the index-only primitive used when callers want discovery without
+    /// materializing the matching previews.
+    pub fn search_preview_indexes(&self, query: &str, limit: Option<usize>) -> RecordResult<Vec<u64>> {
         let loaded = self.loaded.as_ref().ok_or_else(|| {
             RecordError::InvalidConfiguration("preview table is not prepared; run prep() first".into())
         })?;
@@ -135,6 +139,29 @@ impl<S: RecordSource> DatasetEngine<S> {
         for record in loaded {
             if record.elements().iter().any(|element| contains_whole_words(element.text.as_bytes(), query)) {
                 matches.push(record.index());
+                if let Some(limit) = limit {
+                    if matches.len() >= limit { break; }
+                }
+            }
+        }
+        Ok(matches)
+    }
+
+    /// Search the prepared preview table and return the matching bounded previews.
+    ///
+    /// The returned records retain their authoritative dataset indexes.
+    pub fn search_previews(&self, query: &str, limit: Option<usize>) -> RecordResult<Vec<LoadedRecord>> {
+        let loaded = self.loaded.as_ref().ok_or_else(|| {
+            RecordError::InvalidConfiguration("preview table is not prepared; run prep() first".into())
+        })?;
+        if query.is_empty() {
+            return Err(RecordError::InvalidConfiguration("preview search query cannot be empty".into()));
+        }
+
+        let mut matches = Vec::new();
+        for record in loaded {
+            if record.elements().iter().any(|element| contains_whole_words(element.text.as_bytes(), query)) {
+                matches.push(record.clone());
                 if let Some(limit) = limit {
                     if matches.len() >= limit { break; }
                 }
@@ -220,6 +247,30 @@ fn is_word_character(character: char) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn search_previews_returns_bounded_records_with_indexes() {
+        use crate::{DatasetEngine, RecordResult, XmlRecordStream, XmlStreamConfig};
+        use std::io::Cursor;
+
+        let xml = br#"<pages><page><title>First</title></page><page><title>Second</title></page><page><title>First Again</title></page></pages>"#.to_vec();
+        let mut engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
+            Ok(Box::new(XmlRecordStream::new(
+                Cursor::new(xml.clone()),
+                XmlStreamConfig::new("page"),
+            )?))
+        });
+
+        engine.prep().unwrap();
+
+        let matches = engine.search_previews("First", Some(1)).unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].index(), 0);
+        assert_eq!(matches[0].elements()[0].name, "title");
+
+        assert_eq!(engine.search_preview_indexes("First", None).unwrap(), vec![0, 2]);
+    }
+
+
     use super::contains_whole_words;
 
     #[test]

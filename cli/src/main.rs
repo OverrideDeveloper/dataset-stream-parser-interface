@@ -2,6 +2,7 @@ use bzip2::bufread::MultiBzDecoder;
 use dataset_stream_parser_interface::{
     DatasetEngine, PreviewRecord, RecordStream, XmlRecordStream, XmlStreamConfig,
 };
+use dataset_stream_parser_interface::manip::getfragment;
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Seek, Write};
@@ -156,6 +157,7 @@ fn print_help() {
     println!("  clearpreptable        Release the prepared preview table");
     println!("  find <text> [limit]   Find whole-word/phrase matches");
     println!("  get <index>           Retrieve one record by index");
+    println!("  getfragment <index> <text> [max-bytes]  Extract bounded evidence around a match");
     println!("  list <start>..<end>   List a half-open range, e.g. list 0..10");
     println!("  list *                List every record (use with care)");
     println!("  help                  Show this help");
@@ -418,6 +420,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             match engine.find(query, limit) {
                 Ok(matches) => println!("{matches:?}"),
+                Err(error) => eprintln!("error: {error:?}"),
+            }
+            continue;
+        }
+
+        if let Some(rest) = command.strip_prefix("getfragment ") {
+            let mut parts = rest.trim().splitn(2, ' ');
+            let Some(index_text) = parts.next() else {
+                eprintln!("usage: getfragment <index> <text> [max-bytes]");
+                continue;
+            };
+            let Some(query_and_limit) = parts.next() else {
+                eprintln!("usage: getfragment <index> <text> [max-bytes]");
+                continue;
+            };
+
+            let Ok(index) = index_text.parse::<u64>() else {
+                eprintln!("usage: getfragment <index> <text> [max-bytes]");
+                continue;
+            };
+
+            let (query, limit) = match parse_search_args(query_and_limit) {
+                Some((query, limit)) => (query, limit.unwrap_or(4096)),
+                None => {
+                    eprintln!("usage: getfragment <index> <text> [max-bytes]");
+                    continue;
+                }
+            };
+
+            match engine.get(index) {
+                Ok(Some(record)) => match getfragment(&record, query, limit) {
+                    Ok(Some(fragment)) => {
+                        println!("#{} ({} bytes):", fragment.index, fragment.record.len());
+                        println!("{}", fragment.record);
+                    }
+                    Ok(None) => println!("no match for query in record #{index}"),
+                    Err(error) => eprintln!("error: {error:?}"),
+                },
+                Ok(None) => println!("record #{index} not found"),
                 Err(error) => eprintln!("error: {error:?}"),
             }
             continue;

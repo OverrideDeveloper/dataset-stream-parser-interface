@@ -473,17 +473,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let mut parts = value.split_whitespace().collect::<Vec<_>>();
-            let max_bytes = parts.last().and_then(|value| value.parse::<usize>().ok()).and_then(|_| {
-                if parts.len() > 1 {
-                    parts.pop().and_then(|value| value.parse::<usize>().ok())
-                } else {
-                    None
-                }
-            });
+            let mut numeric_suffix = Vec::new();
 
-            let record_limit = parts.last().and_then(|value| value.parse::<usize>().ok()).and_then(|_| {
-                parts.pop().and_then(|value| value.parse::<usize>().ok())
-            });
+            while let Some(last) = parts.last().and_then(|value| value.parse::<usize>().ok()) {
+                numeric_suffix.push(last);
+                parts.pop();
+                if numeric_suffix.len() == 2 {
+                    break;
+                }
+            }
+
+            let (record_limit, max_bytes) = match numeric_suffix.as_slice() {
+                [limit] => (Some(*limit), None),
+                [max_bytes, record_limit] => (Some(*record_limit), Some(*max_bytes)),
+                [] => (None, None),
+                _ => unreachable!(),
+            };
 
             let query = parts.join(" ").trim_matches('"').trim().to_string();
             if query.is_empty() {

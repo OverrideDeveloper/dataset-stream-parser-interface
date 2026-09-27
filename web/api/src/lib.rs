@@ -224,7 +224,7 @@ mod tests {
     #[test]
     fn search_returns_index_and_plain_preview() {
         let response = state().handle("POST", "/local_data/search",
-            br#"{"corpus":"dblp","query":"algebraic systems","limit":5}"#);
+            br#"{"corpus":"dblp","query":"algebraic system","limit":5}"#);
         assert_eq!(response.status, 200);
         let value: serde_json::Value = serde_json::from_str(&response.body).unwrap();
         assert_eq!(value["results"][0]["index"], 0);

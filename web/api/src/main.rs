@@ -4,7 +4,7 @@ use dataset_stream_parser_interface::{
     DatasetEngine, RecordResult, RecordSource, RecordStream, XmlRecordStream, XmlStreamConfig,
 };
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Read, Seek};
+use std::io::{self, BufRead, BufReader, Seek};
 use tiny_http_dh::{Header, Response, Server};
 
 struct FileRecordSource {
@@ -20,11 +20,7 @@ impl FileRecordSource {
     ) -> Result<Box<dyn RecordStream>, Box<dyn std::error::Error>> {
         let mut file = File::open(&self.path)?;
         let compressed = self.path.to_ascii_lowercase().ends_with(".bz2");
-        let start_index = if compressed && position.is_some() {
-            0
-        } else {
-            record_index
-        };
+        let start_index = if compressed && position.is_some() { 0 } else { record_index };
 
         if let Some(position) = position {
             if !compressed {
@@ -39,11 +35,8 @@ impl FileRecordSource {
         };
 
         Ok(Box::new(
-            XmlRecordStream::new(
-                input,
-                XmlStreamConfig::new(self.record_element.clone()),
-            )?
-            .with_record_index(start_index),
+            XmlRecordStream::new(input, XmlStreamConfig::new(self.record_element.clone()))?
+                .with_record_index(start_index),
         ))
     }
 }
@@ -62,7 +55,7 @@ impl RecordSource for FileRecordSource {
     }
 }
 
-fn respond(request: &mut tiny_http_dh::Request, status: u16, body: String) {
+fn respond(request: tiny_http_dh::Request, status: u16, body: String) {
     let content_type = Header::from_bytes(
         &b"Content-Type"[..],
         &b"application/json; charset=utf-8"[..],
@@ -76,14 +69,14 @@ fn respond(request: &mut tiny_http_dh::Request, status: u16, body: String) {
     let _ = request.respond(response);
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let program = "dataset-stream-parser-api";
     let prep = args.iter().any(|arg| arg == "--prep");
     args.retain(|arg| arg != "--prep");
 
     let path = args.first().ok_or_else(|| {
-        format!("usage: {program} <dataset.xml|dataset.xml.bz2> [corpus] [record-element] [bind] [--prep]")
+        format!("{program} <dataset.xml|dataset.xml.bz2> [corpus] [record-element] [bind] [--prep]")
     })?;
     let corpus = args.get(1).cloned().unwrap_or_else(|| "dblp".into());
     let record_element = args.get(2).cloned().unwrap_or_else(|| "page".into());
@@ -118,7 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  prepared: {}", state.is_prepared());
     println!("  startup preparation: {}", if prep { "enabled" } else { "disabled" });
 
-    for mut request in server.incoming_requests() {
+    for request in server.incoming_requests() {
         let method = request.method().as_str().to_string();
         let url = request.url().to_string();
 
@@ -130,15 +123,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "code": "invalid_request",
                         "message": format!("failed to read request body: {error}")
                     }
-                })
-                .to_string();
-                respond(&mut request, 400, body);
+                }).to_string();
+                respond(request, 400, body);
                 continue;
             }
         }
 
         let response = state.handle(&method, &url, &body);
-        respond(&mut request, response.status, response.body);
+        respond(request, response.status, response.body);
     }
 
     Ok(())

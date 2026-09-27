@@ -1,4 +1,5 @@
 use dataset_stream_parser_interface::{
+    manip::{getfragment, searchtogetfragment},
     DatasetEngine, LoadedRecord, RecordError, RecordSource,
 };
 use serde::{Deserialize, Serialize};
@@ -7,12 +8,22 @@ use url::Url;
 const SEARCH_PATH: &str = "/local_data/search";
 const STATUS_PATH: &str = "/local_data/status";
 const RECORD_PATH: &str = "/local_data";
+const FIND_EVIDENCE_PATH: &str = "/local_data/findevidence";
+const GET_EVIDENCE_PATH: &str = "/local_data/getevidence";
 
 #[derive(Debug, Deserialize)]
 pub struct SearchRequest {
     pub corpus: Option<String>,
     pub query: Option<String>,
     pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FindEvidenceRequest {
+    pub corpus: Option<String>,
+    pub query: Option<String>,
+    pub record_limit: Option<usize>,
+    pub max_bytes: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -26,6 +37,19 @@ struct SearchResponse {
     corpus: String,
     query: String,
     results: Vec<SearchResult>,
+}
+
+#[derive(Debug, Serialize)]
+struct EvidenceResult {
+    index: u64,
+    record: String,
+}
+
+#[derive(Debug, Serialize)]
+struct EvidenceResponse {
+    corpus: String,
+    query: String,
+    results: Vec<EvidenceResult>,
 }
 
 #[derive(Debug, Serialize)]
@@ -76,7 +100,9 @@ impl<S: RecordSource> ApiState<S> {
         match (method, request_url.split('?').next().unwrap_or(request_url)) {
             ("GET", STATUS_PATH) => self.handle_status(request_url),
             ("POST", SEARCH_PATH) => self.handle_search(body),
+            ("POST", FIND_EVIDENCE_PATH) => self.handle_find_evidence(body),
             ("GET", RECORD_PATH) => self.handle_record(request_url),
+            ("GET", GET_EVIDENCE_PATH) => self.handle_get_evidence(request_url),
             _ => error_response(404, "not_found", "endpoint not found"),
         }
     }
@@ -125,6 +151,48 @@ impl<S: RecordSource> ApiState<S> {
         }
     }
 
+    fn handle_find_evidence(&self, body: &[u8]) -> ApiResponse {
+        let request: FindEvidenceRequest = match serde_json::from_slice(body) {
+            Ok(request) => request,
+            Err(_) => return error_response(400, "invalid_request", "request body must be valid JSON"),
+        };
+        let Some(corpus) = request.corpus else {
+            return error_response(400, "invalid_request", "corpus is required");
+        };
+        if corpus != self.corpus {
+            return error_response(404, "corpus_not_found", "requested corpus is not configured");
+        }
+        let Some(query) = request.query else {
+            return error_response(400, "invalid_request", "query is required");
+        };
+        if query.trim().is_empty() {
+            return error_response(400, "invalid_query", "query cannot be empty");
+        }
+
+        match searchtogetfragment(
+            &self.engine,
+            &query,
+            request.record_limit,
+            request.max_bytes,
+        ) {
+            Ok(fragments) => {
+                let results = fragments.into_iter()
+                    .map(|fragment| EvidenceResult {
+                        index: fragment.index,
+                        record: fragment.record,
+                    })
+                    .collect();
+
+                json_response(200, &EvidenceResponse {
+                    corpus: self.corpus.clone(),
+                    query,
+                    results,
+                })
+            }
+            Err(error) => map_engine_error(error),
+        }
+    }
+
     fn handle_record(&self, request_url: &str) -> ApiResponse {
         let Some(corpus) = query_parameter(request_url, "corpus") else {
             return error_response(400, "invalid_request", "corpus is required");
@@ -146,6 +214,59 @@ impl<S: RecordSource> ApiState<S> {
                 index: record.index(),
                 record: String::from_utf8_lossy(record.as_bytes()).into_owned(),
             }),
+            Ok(None) => error_response(404, "record_not_found", "record index was not found"),
+            Err(error) => map_engine_error(error),
+        }
+    }
+
+    fn handle_get_evidence(&self, request_url: &str) -> ApiResponse {
+        let Some(corpus) = query_parameter(request_url, "corpus") else {
+            return error_response(400, "invalid_request", "corpus is required");
+        };
+        if corpus != self.corpus {
+            return error_response(404, "corpus_not_found", "requested corpus is not configured");
+        }
+
+        let Some(index) = query_parameter(request_url, "i") else {
+            return error_response(400, "invalid_request", "i is required");
+        };
+        let index = match index.parse::<u64>() {
+            Ok(index) => index,
+            Err(_) => return error_response(400, "invalid_request", "i must be a non-negative integer"),
+        };
+
+        let Some(query) = query_parameter(request_url, "query") else {
+            return error_response(400, "invalid_request", "query is required");
+        };
+        if query.trim().is_empty() {
+            return error_response(400, "invalid_query", "query cannot be empty");
+        }
+
+        let max_bytes = match query_parameter(request_url, "max_bytes") {
+            Some(value) => match value.parse::<usize>() {
+                Ok(value) => Some(value),
+                Err(_) => return error_response(400, "invalid_request", "max_bytes must be a positive integer"),
+            },
+            None => None,
+        };
+
+        match self.engine.get(index) {
+            Ok(Some(record)) => match getfragment(&record, &query, max_bytes.unwrap_or(512)) {
+                Ok(Some(fragment)) => json_response(200, &EvidenceResponse {
+                    corpus: self.corpus.clone(),
+                    query,
+                    results: vec![EvidenceResult {
+                        index: fragment.index,
+                        record: fragment.record,
+                    }],
+                }),
+                Ok(None) => error_response(
+                    404,
+                    "evidence_not_found",
+                    "no evidence matching query was found in the record",
+                ),
+                Err(error) => map_engine_error(error),
+            },
             Ok(None) => error_response(404, "record_not_found", "record index was not found"),
             Err(error) => map_engine_error(error),
         }
@@ -213,7 +334,7 @@ mod tests {
     use std::io::Cursor;
 
     fn state() -> ApiState<impl RecordSource> {
-        let xml = br#"<pages><article><author>Alice</author><title>First Algebraic System</title></article><article><title>Second</title></article></pages>"#.to_vec();
+        let xml = br#"<pages><article><author>Alice</author><title>First Algebraic System</title><year>2026</year></article><article><author>Bob</author><title>Second</title></article></pages>"#.to_vec();
         let mut engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
             Ok(Box::new(XmlRecordStream::new(Cursor::new(xml.clone()), XmlStreamConfig::new("article"))?))
         });
@@ -228,25 +349,94 @@ mod tests {
         assert_eq!(response.status, 200);
         let value: serde_json::Value = serde_json::from_str(&response.body).unwrap();
         assert_eq!(value["results"][0]["index"], 0);
-        assert_eq!(value["results"][0]["preview"], "<author>: Alice\n<title>: First Algebraic System");
+        assert_eq!(value["results"][0]["preview"], "<author>: Alice\n<title>: First Algebraic System\n<year>: 2026");
         assert!(!value["results"][0]["preview"].as_str().unwrap().contains("#0"));
     }
 
     #[test]
-    fn record_returns_authoritative_xml() {
-        let response = state().handle("GET", "/local_data?corpus=dblp&i=0", &[]);
+    fn find_evidence_searches_and_bounds_results() {
+        let response = state().handle(
+            "POST",
+            "/local_data/findevidence",
+            br#"{"corpus":"dblp","query":"algebraic system","record_limit":5,"max_bytes":512}"#,
+        );
         assert_eq!(response.status, 200);
+
         let value: serde_json::Value = serde_json::from_str(&response.body).unwrap();
         assert_eq!(value["corpus"], "dblp");
-        assert_eq!(value["index"], 0);
-        assert!(value["record"].as_str().unwrap().contains("<article><author>Alice</author>"));
+        assert_eq!(value["query"], "algebraic system");
+        assert_eq!(value["results"][0]["index"], 0);
+        assert_eq!(
+            value["results"][0]["record"],
+            "<author>: Alice\n<title>: First Algebraic System\n<year>: 2026"
+        );
     }
 
     #[test]
-    fn status_reports_preparation() {
-        let response = state().handle("GET", "/local_data/status?corpus=dblp", &[]);
+    fn find_evidence_uses_manipulation_defaults() {
+        let response = state().handle(
+            "POST",
+            "/local_data/findevidence",
+            br#"{"corpus":"dblp","query":"algebraic system"}"#,
+        );
         assert_eq!(response.status, 200);
-        assert!(response.body.contains(r#""prepared":true"#));
+
+        let value: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(value["results"].as_array().unwrap().len(), 1);
+        assert!(value["results"][0]["record"].as_str().unwrap().len() <= 512);
+    }
+
+    #[test]
+    fn get_evidence_retrieves_and_bounds_one_record() {
+        let response = state().handle(
+            "GET",
+            "/local_data/getevidence?corpus=dblp&i=0&query=algebraic%20system&max_bytes=512",
+            &[],
+        );
+        assert_eq!(response.status, 200);
+
+        let value: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(value["corpus"], "dblp");
+        assert_eq!(value["query"], "algebraic system");
+        assert_eq!(value["results"][0]["index"], 0);
+        assert_eq!(
+            value["results"][0]["record"],
+            "<author>: Alice\n<title>: First Algebraic System\n<year>: 2026"
+        );
+    }
+
+    #[test]
+    fn get_evidence_reports_missing_match() {
+        let response = state().handle(
+            "GET",
+            "/local_data/getevidence?corpus=dblp&i=0&query=missing",
+            &[],
+        );
+        assert_eq!(response.status, 404);
+        assert!(response.body.contains("evidence_not_found"));
+    }
+
+    #[test]
+    fn get_evidence_reports_missing_record() {
+        let response = state().handle(
+            "GET",
+            "/local_data/getevidence?corpus=dblp&i=99&query=missing",
+            &[],
+        );
+        assert_eq!(response.status, 404);
+        assert!(response.body.contains("record_not_found"));
+    }
+
+    #[test]
+    fn evidence_requires_preparation() {
+        let xml = br#"<pages><article><title>First</title></article></pages>"#.to_vec();
+        let engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
+            Ok(Box::new(XmlRecordStream::new(Cursor::new(xml.clone()), XmlStreamConfig::new("article"))?))
+        });
+        let response = ApiState::new("dblp", engine).handle(
+            "POST", "/local_data/findevidence", br#"{"corpus":"dblp","query":"First"}"#);
+        assert_eq!(response.status, 409);
+        assert!(response.body.contains("corpus_not_prepared"));
     }
 
     #[test]

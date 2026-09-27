@@ -1,6 +1,7 @@
 //! Streaming dataset record interfaces.
 
 mod engine;
+pub mod manip;
 mod record;
 pub mod xml;
 

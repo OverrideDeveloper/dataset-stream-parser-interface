@@ -2,6 +2,7 @@ use crate::{DatasetRecord, RecordError, RecordResult};
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 /// A bounded, normalized fragment of one authoritative dataset record.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -14,27 +15,35 @@ pub struct FragmentRecord {
 struct FragmentElement {
     name: String,
     text: String,
+    content: String,
+    children: Vec<FragmentElement>,
 }
 
 impl FragmentElement {
     fn rendered(&self) -> String {
-        format!("<{}>: {}", self.name, self.text)
+        format!("<{}>: {}", self.name, self.content)
     }
 
     fn rendered_bytes(&self) -> usize {
-        self.rendered().len()
+        self.name.len() + 4 + self.content.len()
     }
 }
 
-/// Extract a bounded fragment around the first whole-word match.
+const MAX_FRAGMENT_DEPTH: usize = 128;
+const MAX_FRAGMENT_ELEMENTS: usize = 100_000;
+const TARGET_EVIDENCE_FRAGMENT_BYTES: usize = 512;
+
+/// Extract bounded evidence around whole-word matches.
 ///
-/// The matching structural child is retained first. Remaining budget is
-/// expanded by structural-neighbor distance. At each distance, the left
-/// neighbor is considered first, then the right neighbor. If both fit, both
-/// are retained. If only one fits, the fitting side is retained; when the
-/// sides are otherwise equally eligible, the left side wins.
+/// Structural elements that fit within max_bytes remain atomic. Oversized
+/// structural elements are treated as containers and searched through their
+/// children. Oversized leaf text is decomposed into bounded windows around
+/// every whole-word match. Multiple matching fragments are retained while
+/// they fit within max_bytes; structural neighbors are then added around
+/// the first matching fragment when budget remains.
 ///
-/// Structural elements are atomic: no element or word is truncated.
+/// No matched word or structural element is truncated. For oversized text,
+/// only the surrounding context is bounded.
 pub fn getfragment(
     record: &DatasetRecord,
     query: &str,
@@ -52,24 +61,37 @@ pub fn getfragment(
     }
 
     let elements = parse_top_level_elements(record.as_bytes())?;
-    let Some(match_index) = elements
-        .iter()
-        .position(|element| contains_whole_words(&element.text, query))
-    else {
-        return Ok(None);
-    };
+    let elements = collect_evidence_elements(elements, query, max_bytes)?;
 
-    let match_element = &elements[match_index];
-    let match_cost = match_element.rendered_bytes();
-    if match_cost > max_bytes {
-        return Err(RecordError::InvalidConfiguration(format!(
-            "matching fragment element exceeds max_bytes ({max_bytes})"
-        )));
+    let matching_indices = elements
+        .iter()
+        .enumerate()
+        .filter_map(|(index, element)| {
+            contains_whole_words(&element.content, query).then_some(index)
+        })
+        .collect::<Vec<_>>();
+
+    if matching_indices.is_empty() {
+        return Ok(None);
     }
 
-    let mut selected = vec![match_index];
-    let mut used = match_cost;
+    let mut selected = Vec::new();
+    let mut used = 0usize;
 
+    // Matching evidence gets priority over contextual neighbors.
+    for index in matching_indices.iter().copied() {
+        let cost = elements[index].rendered_bytes() + usize::from(!selected.is_empty());
+        if used + cost > max_bytes {
+            break;
+        }
+
+        used += cost;
+        selected.push(index);
+    }
+
+    let match_index = matching_indices[0];
+
+    // Preserve the existing nearest-neighbor behavior when budget remains.
     let mut distance = 1usize;
     loop {
         let left_index = match_index.checked_sub(distance);
@@ -81,18 +103,20 @@ pub fn getfragment(
             break;
         }
 
-        let left_cost = left_index.map(|index| {
-            elements[index].rendered_bytes() + usize::from(!selected.is_empty())
-        });
-        let right_cost = right_index.map(|index| {
-            elements[index].rendered_bytes() + usize::from(!selected.is_empty())
-        });
+        let left_cost = left_index
+            .filter(|index| !selected.contains(index))
+            .map(|index| elements[index].rendered_bytes() + usize::from(!selected.is_empty()));
+        let right_cost = right_index
+            .filter(|index| !selected.contains(index))
+            .map(|index| elements[index].rendered_bytes() + usize::from(!selected.is_empty()));
 
         let left_fits = left_cost.is_some_and(|cost| used + cost <= max_bytes);
         let right_fits = right_cost.is_some_and(|cost| used + cost <= max_bytes);
 
         match (left_index, right_index, left_fits, right_fits) {
-            (Some(left), Some(right), true, true) => {
+            (Some(left), Some(right), true, true)
+                if !selected.contains(&left) && !selected.contains(&right) =>
+            {
                 used += left_cost.unwrap();
                 selected.push(left);
 
@@ -102,11 +126,11 @@ pub fn getfragment(
                     selected.push(right);
                 }
             }
-            (Some(left), _, true, false) => {
+            (Some(left), _, true, false) if !selected.contains(&left) => {
                 used += left_cost.unwrap();
                 selected.push(left);
             }
-            (_, Some(right), false, true) => {
+            (_, Some(right), false, true) if !selected.contains(&right) => {
                 used += right_cost.unwrap();
                 selected.push(right);
             }
@@ -137,92 +161,281 @@ fn parse_top_level_elements(bytes: &[u8]) -> RecordResult<Vec<FragmentElement>> 
     reader.config_mut().trim_text(false);
 
     let mut buffer = Vec::new();
-    let mut root_seen = false;
-    let mut elements = Vec::new();
+    let mut stack = Vec::<FragmentElement>::new();
+    let mut root = None;
 
     loop {
         buffer.clear();
 
         match reader.read_event_into(&mut buffer)? {
-            Event::Start(_) if !root_seen => {
-                root_seen = true;
-            }
-            Event::Start(event) if root_seen => {
+            Event::Start(event) => {
                 let name = String::from_utf8_lossy(event.name().as_ref()).into_owned();
-                let text = collect_element_text(&mut reader, &mut buffer)?;
-                elements.push(FragmentElement { name, text });
-            }
-            Event::Empty(event) if root_seen => {
-                let name = String::from_utf8_lossy(event.name().as_ref()).into_owned();
-                elements.push(FragmentElement {
+                stack.push(FragmentElement {
                     name,
                     text: String::new(),
+                    content: String::new(),
+                    children: Vec::new(),
                 });
+            }
+            Event::Empty(event) => {
+                let child = FragmentElement {
+                    name: String::from_utf8_lossy(event.name().as_ref()).into_owned(),
+                    text: String::new(),
+                    content: String::new(),
+                    children: Vec::new(),
+                };
+
+                if let Some(parent) = stack.last_mut() {
+                    parent.children.push(child);
+                } else if root.is_none() {
+                    root = Some(child);
+                } else {
+                    return Err(RecordError::InvalidConfiguration(
+                        "multiple root elements in fragment record".into(),
+                    ));
+                }
+            }
+            Event::Text(event) => {
+                if let Some(current) = stack.last_mut() {
+                    let text = String::from_utf8_lossy(event.as_ref());
+                    current.text.push_str(&text);
+                    current.content.push_str(&text);
+                }
+            }
+            Event::CData(event) => {
+                if let Some(current) = stack.last_mut() {
+                    let text = String::from_utf8_lossy(event.as_ref());
+                    current.text.push_str(&text);
+                    current.content.push_str(&text);
+                }
+            }
+            Event::End(_) => {
+                let Some(completed) = stack.pop() else {
+                    return Err(RecordError::InvalidConfiguration(
+                        "unexpected closing element in fragment record".into(),
+                    ));
+                };
+
+                if let Some(parent) = stack.last_mut() {
+                    parent.content.push_str(&completed.content);
+                    parent.children.push(completed);
+                } else if root.is_none() {
+                    root = Some(completed);
+                } else {
+                    return Err(RecordError::InvalidConfiguration(
+                        "multiple root elements in fragment record".into(),
+                    ));
+                }
             }
             Event::Eof => break,
             _ => {}
         }
     }
 
-    Ok(elements)
+    if !stack.is_empty() {
+        return Err(RecordError::InvalidConfiguration(
+            "unexpected end of input while building fragment".into(),
+        ));
+    }
+
+    Ok(root.map(|element| element.children).unwrap_or_default())
 }
 
-fn collect_element_text(
-    reader: &mut Reader<&[u8]>,
-    buffer: &mut Vec<u8>,
-) -> RecordResult<String> {
-    let mut depth = 1usize;
-    let mut text = String::new();
+fn collect_evidence_elements(
+    elements: Vec<FragmentElement>,
+    query: &str,
+    max_bytes: usize,
+) -> RecordResult<Vec<FragmentElement>> {
+    let mut pending = elements
+        .into_iter()
+        .rev()
+        .map(|element| (element, 0usize))
+        .collect::<Vec<_>>();
+    let mut evidence = Vec::new();
+    let mut seen = 0usize;
 
-    loop {
-        buffer.clear();
+    while let Some((element, depth)) = pending.pop() {
+        seen += 1;
+        if seen > MAX_FRAGMENT_ELEMENTS {
+            return Err(RecordError::InvalidConfiguration(
+                "fragment traversal exceeded the element limit".into(),
+            ));
+        }
 
-        match reader.read_event_into(buffer)? {
-            Event::Start(_) => depth += 1,
-            Event::End(_) => {
-                depth -= 1;
-                if depth == 0 {
-                    break;
-                }
-            }
-            Event::Text(event) => {
-                text.push_str(&String::from_utf8_lossy(event.as_ref()));
-            }
-            Event::CData(event) => {
-                text.push_str(&String::from_utf8_lossy(event.as_ref()));
-            }
-            Event::Empty(_) => {}
-            Event::Eof => {
-                return Err(RecordError::InvalidConfiguration(
-                    "unexpected end of input while building fragment".into(),
-                ));
+        if element.rendered_bytes() <= max_bytes {
+            evidence.push(element);
+            continue;
+        }
+
+        if depth >= MAX_FRAGMENT_DEPTH {
+            return Err(RecordError::InvalidConfiguration(
+                "fragment traversal exceeded the depth limit".into(),
+            ));
+        }
+
+        // Mixed-content XML can contain meaningful direct text alongside
+        // nested children, so inspect the direct text before descending.
+        if !element.text.is_empty() {
+            evidence.extend(bounded_text_fragments(
+                &element.name,
+                &element.text,
+                query,
+                max_bytes,
+            )?);
+        }
+
+        for child in element.children.into_iter().rev() {
+            pending.push((child, depth + 1));
+        }
+    }
+
+    Ok(evidence)
+}
+
+fn bounded_text_fragments(
+    name: &str,
+    text: &str,
+    query: &str,
+    max_bytes: usize,
+) -> RecordResult<Vec<FragmentElement>> {
+    let prefix_bytes = name.len() + 4;
+    if prefix_bytes >= max_bytes {
+        return if whole_word_match_ranges(text, query).is_empty() {
+            Ok(Vec::new())
+        } else {
+            Err(RecordError::InvalidConfiguration(
+                "matching fragment element exceeds max_bytes".into(),
+            ))
+        };
+    }
+
+    let match_ranges = whole_word_match_ranges(text, query);
+    if match_ranges.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let content_budget = max_bytes - prefix_bytes;
+    let target_fragment_bytes = content_budget.min(TARGET_EVIDENCE_FRAGMENT_BYTES);
+
+    let mut fragments = Vec::new();
+    let mut seen = HashSet::new();
+
+    for (match_start, match_end) in match_ranges {
+        let match_bytes = match_end - match_start;
+        if match_bytes > content_budget {
+            return Err(RecordError::InvalidConfiguration(
+                "matching fragment exceeds max_bytes".into(),
+            ));
+        }
+
+        let window = bounded_match_window(text, match_start, match_end, target_fragment_bytes);
+        let key = window.to_owned();
+
+        if seen.insert(key.clone()) {
+            fragments.push(FragmentElement {
+                name: name.to_owned(),
+                text: key.clone(),
+                content: key,
+                children: Vec::new(),
+            });
+        }
+    }
+
+    Ok(fragments)
+}
+
+fn bounded_match_window(text: &str, match_start: usize, match_end: usize, budget: usize) -> &str {
+    let match_bytes = match_end - match_start;
+    if match_bytes >= budget {
+        return &text[match_start..match_end];
+    }
+
+    let remaining = budget - match_bytes;
+    let left_budget = remaining / 2;
+    let right_budget = remaining - left_budget;
+
+    let mut start = floor_char_boundary(text, match_start.saturating_sub(left_budget));
+    let mut end = ceil_char_boundary(
+        text,
+        match_end.saturating_add(right_budget).min(text.len()),
+    );
+
+    while end - start > budget {
+        if end > match_end {
+            end = floor_char_boundary(text, end - 1);
+        } else if start < match_start {
+            start = ceil_char_boundary(text, start + 1);
+        } else {
+            break;
+        }
+    }
+
+    &text[start..end]
+}
+
+fn floor_char_boundary(text: &str, mut index: usize) -> usize {
+    index = index.min(text.len());
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn ceil_char_boundary(text: &str, mut index: usize) -> usize {
+    index = index.min(text.len());
+    while index < text.len() && !text.is_char_boundary(index) {
+        index += 1;
+    }
+    index
+}
+
+fn whole_word_match_ranges(text: &str, query: &str) -> Vec<(usize, usize)> {
+    let text_words = word_ranges(text);
+    let query_words = word_ranges(query);
+
+    if query_words.is_empty() || query_words.len() > text_words.len() {
+        return Vec::new();
+    }
+
+    text_words
+        .windows(query_words.len())
+        .filter_map(|window| {
+            let matches = window
+                .iter()
+                .zip(&query_words)
+                .all(|((_, _, left), (_, _, right))| left.eq_ignore_ascii_case(right));
+
+            matches.then_some((window[0].0, window[window.len() - 1].1))
+        })
+        .collect()
+}
+
+fn word_ranges<'a>(text: &'a str) -> Vec<(usize, usize, &'a str)> {
+    let mut ranges = Vec::new();
+    let mut start = None;
+
+    for (index, character) in text.char_indices() {
+        let is_word = character.is_alphanumeric() || character == '_';
+
+        match (start, is_word) {
+            (None, true) => start = Some(index),
+            (Some(word_start), false) => {
+                ranges.push((word_start, index, &text[word_start..index]));
+                start = None;
             }
             _ => {}
         }
     }
 
-    Ok(text)
+    if let Some(word_start) = start {
+        ranges.push((word_start, text.len(), &text[word_start..]));
+    }
+
+    ranges
 }
 
 fn contains_whole_words(text: &str, query: &str) -> bool {
-    let text_words = text
-        .split(|character: char| !character.is_alphanumeric() && character != '_')
-        .filter(|word| !word.is_empty())
-        .collect::<Vec<_>>();
-    let query_words = query
-        .split(|character: char| !character.is_alphanumeric() && character != '_')
-        .filter(|word| !word.is_empty())
-        .collect::<Vec<_>>();
-
-    if query_words.is_empty() || query_words.len() > text_words.len() {
-        return false;
-    }
-
-    text_words
-        .windows(query_words.len())
-        .any(|window| window.iter().zip(&query_words).all(|(left, right)| {
-            left.eq_ignore_ascii_case(right)
-        }))
+    !whole_word_match_ranges(text, query).is_empty()
 }
 
 #[cfg(test)]
@@ -328,5 +541,56 @@ mod tests {
     fn rejects_empty_query_and_zero_budget() {
         assert!(getfragment(&record("<article><a>x</a></article>"), "", 100).is_err());
         assert!(getfragment(&record("<article><a>x</a></article>"), "x", 0).is_err());
+    }
+
+    #[test]
+    fn descends_through_oversized_containers_to_find_nested_evidence() {
+        let result = getfragment(
+            &record(
+                "<page><title>Analytical engine</title><revision><id>1</id><text>Charles Babbage designed the Analytical Engine as a mechanical general-purpose computer.</text></revision></page>",
+            ),
+            "Analytical Engine",
+            96,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(result.record.contains("<title>: Analytical engine"));
+        assert!(result.record.contains("Analytical Engine"));
+        assert!(result.record.len() <= 96);
+    }
+
+    #[test]
+    fn returns_multiple_bounded_fragments_for_multiple_matches() {
+        let result = getfragment(
+            &record(
+                "<page><text>First Analytical Engine discussion. Padding words. Second Analytical Engine discussion. More padding words. Third Analytical Engine discussion.</text></page>",
+            ),
+            "Analytical Engine",
+            1024,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(result.record.matches("Analytical Engine").count() >= 3);
+        assert!(result.record.len() <= 1024);
+    }
+
+    #[test]
+    fn finds_matches_that_would_otherwise_cross_a_chunk_boundary() {
+        let padding = "x".repeat(500);
+        let xml = format!(
+            "<page><text>{padding} Analytical Engine is here. {padding}</text></page>"
+        );
+
+        let result = getfragment(
+            &record(&xml),
+            "Analytical Engine",
+            512,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(result.record.contains("Analytical Engine"));
     }
 }

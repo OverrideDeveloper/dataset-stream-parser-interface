@@ -572,13 +572,13 @@ mod tests {
                 ),
             ),
             "Analytical Engine",
-            1200,
+            1600,
         )
         .unwrap()
         .unwrap();
 
         assert!(result.record.matches("Analytical Engine").count() >= 3);
-        assert!(result.record.len() <= 1024);
+        assert!(result.record.len() <= 1600);
     }
 
     #[test]

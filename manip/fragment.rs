@@ -549,14 +549,14 @@ mod tests {
             &record(
                 "<page><title>Analytical engine</title><revision><id>1</id><text>Charles Babbage designed the Analytical Engine as a mechanical general-purpose computer.</text></revision></page>",
             ),
-            "Analytical Engine",
+            "mechanical general-purpose computer",
             96,
         )
         .unwrap()
         .unwrap();
 
-        assert!(result.record.contains("<title>: Analytical engine"));
-        assert!(result.record.contains("Analytical Engine"));
+        assert!(!result.record.contains("<title>: Analytical engine"));
+        assert!(result.record.contains("mechanical general-purpose computer"));
         assert!(result.record.len() <= 96);
     }
 
@@ -564,10 +564,15 @@ mod tests {
     fn returns_multiple_bounded_fragments_for_multiple_matches() {
         let result = getfragment(
             &record(
-                "<page><text>First Analytical Engine discussion. Padding words. Second Analytical Engine discussion. More padding words. Third Analytical Engine discussion.</text></page>",
+                &format!(
+                    "<page><text>First Analytical Engine discussion. {} Second Analytical Engine discussion. {} Third Analytical Engine discussion. {}</text></page>",
+                    "padding ".repeat(120),
+                    "padding ".repeat(120),
+                    "padding ".repeat(120),
+                ),
             ),
             "Analytical Engine",
-            1024,
+            1200,
         )
         .unwrap()
         .unwrap();

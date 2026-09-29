@@ -35,7 +35,7 @@ pub fn searchtogetfragment<S: RecordSource>(
 
     for index in indexes {
         if let Some(record) = engine.get(index)? {
-            if let Some(fragment) = engine.source_fragment(index, query, max_bytes)? {
+            if let Some(fragment) = engine.get_fragment(index, query, max_bytes)? {
                 fragments.push(fragment);
             }
         }

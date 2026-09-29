@@ -1,7 +1,7 @@
 use bzip2::bufread::MultiBzDecoder;
 use dataset_stream_parser_interface::{
-    DatasetEngine, PreviewConfig, PreviewRecord, RecordStream, TextRecordStream, TextStreamConfig,
-    XmlRecordStream, XmlStreamConfig,
+    DatasetEngine, DirectoryRecordSource, PreviewConfig, PreviewRecord, RecordSource, RecordStream,
+    TextRecordStream, TextStreamConfig, XmlRecordStream, XmlStreamConfig,
 };
 use dataset_stream_parser_interface::manip::{getfragment_text, searchtogetfragment, FragmentRecord};
 use std::cell::RefCell;
@@ -165,7 +165,57 @@ impl dataset_stream_parser_interface::RecordSource for &FileRecordSource {
     }
 }
 
-fn configure_save(source: &FileRecordSource, path: &str) {
+enum CliRecordSource {
+    File(FileRecordSource),
+    Directory(DirectoryRecordSource),
+}
+
+impl CliRecordSource {
+    fn configure_save(&self, path: &str) {
+        if let Self::File(source) = self {
+            source.configure_save(path);
+        }
+    }
+}
+
+impl RecordSource for CliRecordSource {
+    fn fragment(&self, record: &dataset_stream_parser_interface::DatasetRecord, query: &str, max_bytes: usize) -> dataset_stream_parser_interface::RecordResult<Option<FragmentRecord>> {
+        match self {
+            Self::File(source) => source.fragment(record, query, max_bytes),
+            Self::Directory(source) => source.fragment(record, query, max_bytes),
+        }
+    }
+
+    fn preview(&self, record: &dataset_stream_parser_interface::DatasetRecord, config: &PreviewConfig) -> dataset_stream_parser_interface::RecordResult<PreviewRecord> {
+        match self {
+            Self::File(source) => source.preview(record, config),
+            Self::Directory(source) => source.preview(record, config),
+        }
+    }
+
+    fn open(&self) -> dataset_stream_parser_interface::RecordResult<Box<dyn RecordStream>> {
+        match self {
+            Self::File(source) => source.open(),
+            Self::Directory(source) => source.open(),
+        }
+    }
+
+    fn open_from(&self, position: u64, record_index: u64) -> dataset_stream_parser_interface::RecordResult<Box<dyn RecordStream>> {
+        match self {
+            Self::File(source) => source.open_from(position, record_index),
+            Self::Directory(source) => source.open_from(position, record_index),
+        }
+    }
+
+    fn initial_checkpoints(&self) -> Vec<dataset_stream_parser_interface::engine::Checkpoint> {
+        match self {
+            Self::File(source) => source.initial_checkpoints(),
+            Self::Directory(source) => source.initial_checkpoints(),
+        }
+    }
+}
+
+fn configure_save(source: &CliRecordSource, path: &str) {
     source.set_save_path(path.to_string());
 }
 
@@ -223,32 +273,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args();
     let program = args.next().unwrap_or_else(|| "dataset-stream-parser-cli".into());
     let path = args.next().ok_or_else(|| {
-        format!("usage: {program} <dataset.xml|dataset.xml.bz2|dataset.txt|dataset.txt.bz2> [record-element]")
+        format!("usage: {program} <dataset-folder|dataset.xml|dataset.xml.bz2|dataset.txt|dataset.txt.bz2> [record-element]")
     })?;
     let record_element = args.next().unwrap_or_else(|| "page".into());
+    let input_path = std::path::Path::new(&path);
+    let is_directory = input_path.is_dir();
 
-    let lowercase_path = path.to_ascii_lowercase();
-    let dataset_path = lowercase_path
-        .strip_suffix(".bz2")
-        .unwrap_or(&lowercase_path);
-    let text = dataset_path.ends_with(".txt");
+    let source = if is_directory {
+        if args.next().is_some() {
+            return Err("record-element is not used with folder datasets".into());
+        }
+        CliRecordSource::Directory(DirectoryRecordSource::new(input_path)?)
+    } else {
+        let lowercase_path = path.to_ascii_lowercase();
+        let dataset_path = lowercase_path.strip_suffix(".bz2").unwrap_or(&lowercase_path);
+        let text = dataset_path.ends_with(".txt");
 
-    let source = FileRecordSource {
-        path: path.clone(),
-        record_element: record_element.clone(),
-        text,
-        save_path: RefCell::new(None),
+        CliRecordSource::File(FileRecordSource {
+            path: path.clone(),
+            record_element: record_element.clone(),
+            text,
+            save_path: RefCell::new(None),
+        })
     };
+    let is_compressed_file = !is_directory && path.to_ascii_lowercase().ends_with(".bz2");
     let mut engine = DatasetEngine::new(&source);
 
     println!("Dataset CLI");
     println!("  dataset: {path}");
-    if text {
-        println!("  format:  plain text");
+    if is_directory {
+        println!("  format:  flat TXT folder");
         println!("  record:  paragraph / bounded text chunk");
     } else {
-        println!("  format:  XML");
-        println!("  record:  <{record_element}>");
+        let lowercase_path = path.to_ascii_lowercase();
+        let dataset_path = lowercase_path.strip_suffix(".bz2").unwrap_or(&lowercase_path);
+        if dataset_path.ends_with(".txt") {
+            println!("  format:  plain text");
+            println!("  record:  paragraph / bounded text chunk");
+        } else {
+            println!("  format:  XML");
+            println!("  record:  <{record_element}>");
+        }
     }
     println!("Type 'help' for commands.");
 
@@ -305,7 +370,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
 
-            if save && !path.to_ascii_lowercase().ends_with(".bz2") {
+            if save && !is_compressed_file {
                 eprintln!("error: --save is only valid for .bz2 datasets");
                 continue;
             }
@@ -341,7 +406,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Saving decompressed corpus to: {target}");
             }
 
-            if text {
+            if is_directory {
                 println!("Preparing bounded text previews (target 4 KiB, starting at the beginning of each record)...");
             } else {
                 println!("Preparing bounded named-text previews (target 4 KiB, stop at <title>, max 10 children)...");

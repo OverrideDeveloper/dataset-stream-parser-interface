@@ -1,4 +1,4 @@
-use crate::{DatasetRecord, LoadedRecord, PreviewConfig, RecordError, RecordResult, RecordStream};
+use crate::{manip::{getfragment, FragmentRecord}, DatasetRecord, LoadedRecord, PreviewConfig, RecordError, RecordResult, RecordStream};
 
 /// Re-openable source of dataset record streams.
 pub trait RecordSource {
@@ -12,6 +12,10 @@ pub trait RecordSource {
     fn preview(&self, record: &DatasetRecord, config: &PreviewConfig) -> RecordResult<LoadedRecord> {
         record.preview_xml(config)
     }
+    fn fragment(&self, record: &DatasetRecord, query: &str, max_bytes: usize) -> RecordResult<Option<FragmentRecord>> {
+        getfragment(record, query, max_bytes)
+    }
+
     fn open_from(&self, position: u64, record_index: u64) -> RecordResult<Box<dyn RecordStream>> {
         let _ = (position, record_index);
         self.open()
@@ -123,6 +127,13 @@ impl<S: RecordSource> DatasetEngine<S> {
             }
         }
         Ok(None)
+    }
+
+    pub fn get_fragment(&self, index: u64, query: &str, max_bytes: usize) -> RecordResult<Option<FragmentRecord>> {
+        match self.get(index)? {
+            Some(record) => self.source.fragment(&record, query, max_bytes),
+            None => Ok(None),
+        }
     }
 
     pub fn is_prepared(&self) -> bool { self.loaded.is_some() }

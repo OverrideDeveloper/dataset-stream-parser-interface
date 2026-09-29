@@ -209,7 +209,7 @@ impl DatasetRecord {
         config.validate()?;
 
         let text = String::from_utf8_lossy(&self.bytes);
-        let bounded = bounded_text_window_from_start(&text, config.target_bytes);
+        let bounded = bounded_text_window_around_match(&text, 0, 0, config.target_bytes);
 
         Ok(PreviewRecord::new(
             self.index,
@@ -276,6 +276,14 @@ pub(crate) fn bounded_text_window_around_match(
         return "";
     }
 
+    // A zero-width match at the beginning is the text-preview form of the
+    // same algorithm: instead of centering on a query match, anchor the
+    // bounded window at byte zero.
+    if match_start == 0 && match_end == 0 {
+        let end = ceil_char_boundary(text, budget.min(text.len()));
+        return &text[..end];
+    }
+
     let match_bytes = match_end - match_start;
     if match_bytes >= budget {
         return &text[match_start..match_end];
@@ -302,15 +310,6 @@ pub(crate) fn bounded_text_window_around_match(
     }
 
     &text[start..end]
-}
-
-pub(crate) fn bounded_text_window_from_start(text: &str, budget: usize) -> &str {
-    if budget == 0 || text.is_empty() {
-        return "";
-    }
-
-    let end = ceil_char_boundary(text, budget.min(text.len()));
-    &text[..end]
 }
 
 fn floor_char_boundary(text: &str, mut index: usize) -> usize {
@@ -375,6 +374,18 @@ mod tests {
     fn preview(xml: &str, config: PreviewConfig) -> super::PreviewRecord {
         let record = DatasetRecord::new(0, xml.as_bytes().to_vec());
         record.preview_xml(&config).unwrap()
+    }
+
+    #[test]
+    fn text_preview_starts_at_beginning_and_respects_utf8_boundaries() {
+        let record = DatasetRecord::new(7, "alpha βeta gamma delta".as_bytes().to_vec());
+        let config = PreviewConfig::new(7, 10);
+        let result = record.preview_text(&config).unwrap();
+
+        assert_eq!(result.index(), 7);
+        assert_eq!(result.elements()[0].name, "text");
+        assert_eq!(result.elements()[0].text, "alpha β");
+        assert!(result.elements()[0].text.len() <= 7);
     }
 
     #[test]

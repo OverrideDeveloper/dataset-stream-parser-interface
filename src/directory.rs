@@ -384,7 +384,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut engine = DatasetEngine::new(source);
+        let engine = DatasetEngine::new(source);
         assert!(!engine.is_prepared());
 
         let record = engine.get(2).unwrap().unwrap();

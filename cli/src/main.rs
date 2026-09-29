@@ -1,6 +1,7 @@
 use bzip2::bufread::MultiBzDecoder;
 use dataset_stream_parser_interface::{
-    DatasetEngine, PreviewRecord, RecordStream, XmlRecordStream, XmlStreamConfig,
+    DatasetEngine, PreviewConfig, PreviewRecord, RecordStream, TextRecordStream, TextStreamConfig,
+    XmlRecordStream, XmlStreamConfig,
 };
 use dataset_stream_parser_interface::manip::{getfragment, searchtogetfragment};
 use std::cell::RefCell;
@@ -10,6 +11,7 @@ use std::io::{self, BufRead, BufReader, Read, Seek, Write};
 struct FileRecordSource {
     path: String,
     record_element: String,
+    text: bool,
     save_path: RefCell<Option<String>>,
 }
 
@@ -73,14 +75,33 @@ impl FileRecordSource {
             Box::new(BufReader::new(file))
         };
 
-        Ok(Box::new(XmlRecordStream::new(
-            input,
-            XmlStreamConfig::new(self.record_element.clone()),
-        )?.with_record_index(start_index)))
+        if self.text {
+            Ok(Box::new(TextRecordStream::new(
+                input,
+                TextStreamConfig::default(),
+            )?.with_record_index(start_index)))
+        } else {
+            Ok(Box::new(XmlRecordStream::new(
+                input,
+                XmlStreamConfig::new(self.record_element.clone()),
+            )?.with_record_index(start_index)))
+        }
     }
 }
 
 impl dataset_stream_parser_interface::RecordSource for FileRecordSource {
+    fn preview(
+        &self,
+        record: &dataset_stream_parser_interface::DatasetRecord,
+        config: &PreviewConfig,
+    ) -> dataset_stream_parser_interface::RecordResult<PreviewRecord> {
+        if self.text {
+            record.preview_text(config)
+        } else {
+            record.preview_xml(config)
+        }
+    }
+
     fn open(&self) -> dataset_stream_parser_interface::RecordResult<Box<dyn RecordStream>> {
         self.open_input(None, 0, true).map_err(|error| {
             dataset_stream_parser_interface::RecordError::Io(std::io::Error::other(error.to_string()))
@@ -190,20 +211,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args();
     let program = args.next().unwrap_or_else(|| "dataset-stream-parser-cli".into());
     let path = args.next().ok_or_else(|| {
-        format!("usage: {program} <dataset.xml|dataset.xml.bz2> [record-element]")
+        format!("usage: {program} <dataset.xml|dataset.xml.bz2|dataset.txt|dataset.txt.bz2> [record-element]")
     })?;
     let record_element = args.next().unwrap_or_else(|| "page".into());
+
+    let text = path
+        .to_ascii_lowercase()
+        .strip_suffix(".bz2")
+        .unwrap_or(&path.to_ascii_lowercase())
+        .ends_with(".txt");
 
     let source = FileRecordSource {
         path: path.clone(),
         record_element: record_element.clone(),
+        text,
         save_path: RefCell::new(None),
     };
     let mut engine = DatasetEngine::new(&source);
 
     println!("Dataset CLI");
     println!("  dataset: {path}");
-    println!("  record:  <{record_element}>");
+    if text {
+        println!("  format:  plain text");
+        println!("  record:  paragraph / bounded text chunk");
+    } else {
+        println!("  format:  XML");
+        println!("  record:  <{record_element}>");
+    }
     println!("Type 'help' for commands.");
 
     let stdin = io::stdin();
@@ -295,7 +329,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Saving decompressed corpus to: {target}");
             }
 
-            println!("Preparing bounded named-text previews (target 4 KiB, stop at <title>, max 10 children)...");
+            if text {
+                println!("Preparing bounded text previews (target 4 KiB, starting at the beginning of each record)...");
+            } else {
+                println!("Preparing bounded named-text previews (target 4 KiB, stop at <title>, max 10 children)...");
+            }
             let result = engine.prep_with_progress(|count| {
                 if count % 10_000 == 0 {
                     print!("\rPrepared {count} records...");

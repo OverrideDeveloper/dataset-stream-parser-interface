@@ -121,24 +121,6 @@ impl dataset_stream_parser_interface::RecordSource for FileRecordSource {
 
 
 
-#[allow(dead_code)]
-fn open_source(
-    path: &str,
-    record_element: &str,
-) -> Result<Box<dyn RecordStream>, Box<dyn std::error::Error>> {
-    let file = File::open(path)?;
-    let input: Box<dyn BufRead> = if path.to_ascii_lowercase().ends_with(".bz2") {
-        Box::new(BufReader::new(MultiBzDecoder::new(BufReader::new(file))))
-    } else {
-        Box::new(BufReader::new(file))
-    };
-
-    Ok(Box::new(XmlRecordStream::new(
-        input,
-        XmlStreamConfig::new(record_element.to_string()),
-    )?))
-}
-
 impl dataset_stream_parser_interface::RecordSource for &FileRecordSource {
     fn preview(
         &self,

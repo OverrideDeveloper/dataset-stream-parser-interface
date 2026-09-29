@@ -140,6 +140,14 @@ fn open_source(
 }
 
 impl dataset_stream_parser_interface::RecordSource for &FileRecordSource {
+    fn preview(
+        &self,
+        record: &dataset_stream_parser_interface::DatasetRecord,
+        config: &PreviewConfig,
+    ) -> dataset_stream_parser_interface::RecordResult<PreviewRecord> {
+        (*self).preview(record, config)
+    }
+
     fn open(&self) -> dataset_stream_parser_interface::RecordResult<Box<dyn RecordStream>> {
         (*self).open()
     }
@@ -215,11 +223,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     let record_element = args.next().unwrap_or_else(|| "page".into());
 
-    let text = path
-        .to_ascii_lowercase()
+    let lowercase_path = path.to_ascii_lowercase();
+    let dataset_path = lowercase_path
         .strip_suffix(".bz2")
-        .unwrap_or(&path.to_ascii_lowercase())
-        .ends_with(".txt");
+        .unwrap_or(&lowercase_path);
+    let text = dataset_path.ends_with(".txt");
 
     let source = FileRecordSource {
         path: path.clone(),

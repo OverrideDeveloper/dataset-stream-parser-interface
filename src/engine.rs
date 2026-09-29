@@ -78,6 +78,7 @@ impl<S: RecordSource> DatasetEngine<S> {
 
     pub fn checkpoint_interval(&self) -> u64 { self.checkpoint_interval }
     pub fn checkpoints(&self) -> &[Checkpoint] { &self.checkpoints }
+    pub fn source(&self) -> &S { &self.source }
 
     pub fn with_preview_config(mut self, config: PreviewConfig) -> RecordResult<Self> {
         config.validate()?;

@@ -259,7 +259,7 @@ impl<S: RecordSource> ApiState<S> {
         };
 
         match self.engine.get(index) {
-            Ok(Some(record)) => match getfragment(&record, &query, max_bytes.unwrap_or(512)) {
+            Ok(Some(record)) => match self.engine.get_fragment(index, &query, max_bytes.unwrap_or(512)) {
                 Ok(Some(fragment)) => json_response(200, &EvidenceRecordResponse {
                     corpus: self.corpus.clone(),
                     query,
@@ -336,7 +336,7 @@ pub fn engine_from_source<S: RecordSource>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dataset_stream_parser_interface::{RecordResult, RecordStream, XmlRecordStream, XmlStreamConfig};
+    use dataset_stream_parser_interface::{RecordResult, RecordStream, TextRecordStream, TextStreamConfig, XmlRecordStream, XmlStreamConfig};
     use std::io::Cursor;
 
     fn state() -> ApiState<impl RecordSource> {
@@ -409,6 +409,31 @@ mod tests {
             value["results"][0]["record"],
             "<author>: Alice\n<title>: First Algebraic System\n<year>: 2026"
         );
+    }
+
+    #[test]
+    fn get_evidence_uses_text_source_fragmentation() {
+        let text = b"First paragraph.\\n\\nMiss Bartlett was here.\\n\\nThird paragraph.\\n".to_vec();
+        let mut engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
+            Ok(Box::new(TextRecordStream::new(
+                std::io::Cursor::new(text.clone()),
+                TextStreamConfig::default(),
+            )?))
+        });
+        engine.prep().unwrap();
+
+        let response = ApiState::new("folderTest", engine).handle(
+            "GET",
+            "/local_data/getevidence?corpus=folderTest&i=1&query=Bartlett&max_bytes=512",
+            &[],
+        );
+        assert_eq!(response.status, 200);
+
+        let value: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(value["corpus"], "folderTest");
+        assert_eq!(value["query"], "Bartlett");
+        assert_eq!(value["index"], 1);
+        assert!(value["record"].as_str().unwrap().contains("Bartlett"));
     }
 
     #[test]

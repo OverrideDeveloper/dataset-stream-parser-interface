@@ -1,5 +1,6 @@
 //! Streaming dataset record interfaces.
 
+mod directory;
 mod engine;
 #[path = "../manip/mod.rs"]
 pub mod manip;
@@ -7,6 +8,7 @@ mod record;
 pub mod text;
 pub mod xml;
 
+pub use directory::{DirectoryRecordSource, FileRecordRange};
 pub use engine::{Checkpoint, DatasetEngine, RecordSource};
 pub use record::{
     DatasetRecord, LoadedRecord, PreviewConfig, PreviewElement, PreviewRecord, RecordDecoder,

@@ -39,7 +39,7 @@ pub struct TextRecordStream<R> {
     reader: R,
     config: TextStreamConfig,
     record_index: u64,
-    pending_record: Option<String>,
+    pending_records: Vec<String>,
     eof: bool,
 }
 
@@ -55,7 +55,7 @@ impl<R: BufRead> TextRecordStream<R> {
             reader,
             config,
             record_index: 0,
-            pending_record: None,
+            pending_records: Vec::new(),
             eof: false,
         })
     }
@@ -151,35 +151,40 @@ impl<R: BufRead> TextRecordStream<R> {
     }
 
     fn next_chunk(&mut self) -> RecordResult<Option<String>> {
-        loop {
-            if let Some(pending) = self.pending_record.take() {
-                return Ok(Some(pending));
-            }
+        if let Some(record) = self.pending_records.pop() {
+            return Ok(Some(record));
+        }
 
+        let target = self.config.target_record_bytes;
+        let mut record = String::new();
+
+        loop {
             let paragraph = match self.next_paragraph()? {
                 Some(paragraph) => paragraph,
-                None => return Ok(None),
+                None => break,
             };
 
             let chunks = self.split_paragraph(&paragraph);
-            if chunks.is_empty() {
-                continue;
+
+            for chunk in chunks {
+                if record.is_empty() {
+                    record = chunk;
+                } else if record.len() + chunk.len() <= target {
+                    record.push_str("\n");
+                    record.push_str(&chunk);
+                } else {
+                    self.pending_records.push(chunk);
+                    // Preserve the remaining chunks from this paragraph and
+                    // any later paragraphs in their original order.
+                    return Ok(Some(record));
+                }
             }
+        }
 
-            let mut chunks = chunks.into_iter();
-            let first = chunks.next().unwrap();
-
-            // Keep later pieces of an oversized paragraph for subsequent calls.
-            let mut remaining = chunks.collect::<Vec<_>>();
-            remaining.reverse();
-            for chunk in remaining {
-                self.pending_record = Some(match self.pending_record.take() {
-                    Some(existing) => format!("{chunk}{existing}"),
-                    None => chunk,
-                });
-            }
-
-            return Ok(Some(first));
+        if record.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(record))
         }
     }
 }

@@ -297,7 +297,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
     };
     let is_compressed_file = !is_directory && path.to_ascii_lowercase().ends_with(".bz2");
-    let mut engine = DatasetEngine::new(&source);
+    let mut engine = DatasetEngine::new(source);
 
     println!("Dataset CLI");
     println!("  dataset: {path}");
@@ -402,7 +402,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             if let Some(target) = &save_path {
-                configure_save(&source, target);
+                configure_save(engine.source(), target);
                 println!("Saving decompressed corpus to: {target}");
             }
 

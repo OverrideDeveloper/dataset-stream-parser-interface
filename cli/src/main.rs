@@ -3,7 +3,7 @@ use dataset_stream_parser_interface::{
     DatasetEngine, PreviewConfig, PreviewRecord, RecordStream, TextRecordStream, TextStreamConfig,
     XmlRecordStream, XmlStreamConfig,
 };
-use dataset_stream_parser_interface::manip::{getfragment, searchtogetfragment};
+use dataset_stream_parser_interface::manip::{getfragment_text, searchtogetfragment, FragmentRecord};
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Seek, Write};
@@ -90,6 +90,19 @@ impl FileRecordSource {
 }
 
 impl dataset_stream_parser_interface::RecordSource for FileRecordSource {
+    fn fragment(
+        &self,
+        record: &dataset_stream_parser_interface::DatasetRecord,
+        query: &str,
+        max_bytes: usize,
+    ) -> dataset_stream_parser_interface::RecordResult<Option<FragmentRecord>> {
+        if self.text {
+            getfragment_text(record, query, max_bytes)
+        } else {
+            dataset_stream_parser_interface::manip::getfragment(record, query, max_bytes)
+        }
+    }
+
     fn preview(
         &self,
         record: &dataset_stream_parser_interface::DatasetRecord,
@@ -122,6 +135,15 @@ impl dataset_stream_parser_interface::RecordSource for FileRecordSource {
 
 
 impl dataset_stream_parser_interface::RecordSource for &FileRecordSource {
+    fn fragment(
+        &self,
+        record: &dataset_stream_parser_interface::DatasetRecord,
+        query: &str,
+        max_bytes: usize,
+    ) -> dataset_stream_parser_interface::RecordResult<Option<FragmentRecord>> {
+        (*self).fragment(record, query, max_bytes)
+    }
+
     fn preview(
         &self,
         record: &dataset_stream_parser_interface::DatasetRecord,
@@ -478,16 +500,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            match engine.get(index) {
-                Ok(Some(record)) => match getfragment(&record, query, limit) {
-                    Ok(Some(fragment)) => {
-                        println!("#{} ({} bytes):", fragment.index, fragment.record.len());
-                        println!("{}", fragment.record);
-                    }
-                    Ok(None) => println!("no match for query in record #{index}"),
-                    Err(error) => eprintln!("error: {error:?}"),
-                },
-                Ok(None) => println!("record #{index} not found"),
+            match engine.get_fragment(index, query, limit) {
+                Ok(Some(fragment)) => {
+                    println!("#{} ({} bytes):", fragment.index, fragment.record.len());
+                    println!("{}", fragment.record);
+                }
+                Ok(None) => println!("no match for query in record #{index}"),
                 Err(error) => eprintln!("error: {error:?}"),
             }
             continue;

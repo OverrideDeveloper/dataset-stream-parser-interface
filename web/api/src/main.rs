@@ -1,7 +1,8 @@
 use bzip2::bufread::MultiBzDecoder;
 use dataset_stream_parser_api::engine_from_source;
 use dataset_stream_parser_interface::{
-    DatasetEngine, RecordResult, RecordSource, RecordStream, XmlRecordStream, XmlStreamConfig,
+    DatasetEngine, DirectoryRecordSource, RecordResult, RecordSource, RecordStream, XmlRecordStream,
+    XmlStreamConfig,
 };
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Seek};
@@ -10,6 +11,57 @@ use tiny_http_dh::{Header, Response, Server};
 struct FileRecordSource {
     path: String,
     record_element: String,
+}
+
+enum ApiRecordSource {
+    File(FileRecordSource),
+    Directory(DirectoryRecordSource),
+}
+
+impl RecordSource for ApiRecordSource {
+    fn open(&self) -> RecordResult<Box<dyn RecordStream>> {
+        match self {
+            Self::File(source) => source.open(),
+            Self::Directory(source) => source.open(),
+        }
+    }
+
+    fn initial_checkpoints(&self) -> Vec<dataset_stream_parser_interface::Checkpoint> {
+        match self {
+            Self::File(source) => source.initial_checkpoints(),
+            Self::Directory(source) => source.initial_checkpoints(),
+        }
+    }
+
+    fn preview(
+        &self,
+        record: &dataset_stream_parser_interface::DatasetRecord,
+        config: &dataset_stream_parser_interface::PreviewConfig,
+    ) -> RecordResult<dataset_stream_parser_interface::LoadedRecord> {
+        match self {
+            Self::File(source) => source.preview(record, config),
+            Self::Directory(source) => source.preview(record, config),
+        }
+    }
+
+    fn fragment(
+        &self,
+        record: &dataset_stream_parser_interface::DatasetRecord,
+        query: &str,
+        max_bytes: usize,
+    ) -> RecordResult<Option<dataset_stream_parser_interface::manip::FragmentRecord>> {
+        match self {
+            Self::File(source) => source.fragment(record, query, max_bytes),
+            Self::Directory(source) => source.fragment(record, query, max_bytes),
+        }
+    }
+
+    fn open_from(&self, position: u64, record_index: u64) -> RecordResult<Box<dyn RecordStream>> {
+        match self {
+            Self::File(source) => source.open_from(position, record_index),
+            Self::Directory(source) => source.open_from(position, record_index),
+        }
+    }
 }
 
 impl FileRecordSource {
@@ -76,15 +128,20 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     args.retain(|arg| arg != "--prep");
 
     let path = args.first().ok_or_else(|| {
-        format!("{program} <dataset.xml|dataset.xml.bz2> [corpus] [record-element] [bind] [--prep]")
+        format!("{program} <dataset.xml|dataset.xml.bz2|folder> [corpus] [record-element] [bind] [--prep]")
     })?;
     let corpus = args.get(1).cloned().unwrap_or_else(|| "dblp".into());
     let record_element = args.get(2).cloned().unwrap_or_else(|| "page".into());
     let bind = args.get(3).cloned().unwrap_or_else(|| "127.0.0.1:60005".into());
 
-    let source = FileRecordSource {
-        path: path.clone(),
-        record_element: record_element.clone(),
+    let input_path = std::path::Path::new(path);
+    let source = if input_path.is_dir() {
+        ApiRecordSource::Directory(DirectoryRecordSource::new(input_path)?)
+    } else {
+        ApiRecordSource::File(FileRecordSource {
+            path: path.clone(),
+            record_element: record_element.clone(),
+        })
     };
     let mut engine = DatasetEngine::new(source);
 
@@ -106,7 +163,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Dataset HTTP API");
     println!("  dataset: {path}");
     println!("  corpus:  {corpus}");
-    println!("  record:  <{record_element}>");
+    if input_path.is_dir() {
+        println!("  record:  paragraph / bounded text chunk");
+    } else {
+        println!("  record:  <{record_element}>");
+    }
     println!("  listen:  http://{bind}");
     println!("  prepared: {}", state.is_prepared());
     println!("  startup preparation: {}", if prep { "enabled" } else { "disabled" });

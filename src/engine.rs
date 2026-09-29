@@ -1,8 +1,21 @@
-use crate::{DatasetRecord, LoadedRecord, PreviewConfig, RecordError, RecordResult, RecordStream};
+use crate::{manip::{getfragment, FragmentRecord}, DatasetRecord, LoadedRecord, PreviewConfig, RecordError, RecordResult, RecordStream};
 
 /// Re-openable source of dataset record streams.
 pub trait RecordSource {
     fn open(&self) -> RecordResult<Box<dyn RecordStream>>;
+
+    /// Build the prepared preview for one authoritative record.
+    ///
+    /// XML sources retain the historical structured preview by default. Other
+    /// source types can override this when their records have different
+    /// semantics, without making DatasetEngine format-aware.
+    fn preview(&self, record: &DatasetRecord, config: &PreviewConfig) -> RecordResult<LoadedRecord> {
+        record.preview_xml(config)
+    }
+    fn fragment(&self, record: &DatasetRecord, query: &str, max_bytes: usize) -> RecordResult<Option<FragmentRecord>> {
+        getfragment(record, query, max_bytes)
+    }
+
     fn open_from(&self, position: u64, record_index: u64) -> RecordResult<Box<dyn RecordStream>> {
         let _ = (position, record_index);
         self.open()
@@ -84,7 +97,7 @@ impl<S: RecordSource> DatasetEngine<S> {
         let mut checkpoints = Vec::new();
 
         while let Some(record) = stream.next_record()? {
-            loaded.push(record.preview(&self.preview_config)?);
+            loaded.push(self.source.preview(&record, &self.preview_config)?);
             let count = loaded.len();
             progress(count);
 
@@ -114,6 +127,13 @@ impl<S: RecordSource> DatasetEngine<S> {
             }
         }
         Ok(None)
+    }
+
+    pub fn get_fragment(&self, index: u64, query: &str, max_bytes: usize) -> RecordResult<Option<FragmentRecord>> {
+        match self.get(index)? {
+            Some(record) => self.source.fragment(&record, query, max_bytes),
+            None => Ok(None),
+        }
     }
 
     pub fn is_prepared(&self) -> bool { self.loaded.is_some() }

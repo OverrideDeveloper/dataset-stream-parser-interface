@@ -1,4 +1,4 @@
-use crate::{DatasetRecord, RecordError, RecordResult};
+use crate::{record::bounded_text_window_around_match, DatasetRecord, RecordError, RecordResult};
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use serde::{Deserialize, Serialize};
@@ -44,6 +44,73 @@ const TARGET_EVIDENCE_FRAGMENT_BYTES: usize = 512;
 ///
 /// No matched word or structural element is truncated. For oversized text,
 /// only the surrounding context is bounded.
+/// Extract bounded evidence from a plain-text record around whole-word matches.
+pub fn getfragment_text(
+    record: &DatasetRecord,
+    query: &str,
+    max_bytes: usize,
+) -> RecordResult<Option<FragmentRecord>> {
+    if query.trim().is_empty() {
+        return Err(RecordError::InvalidConfiguration(
+            "fragment query cannot be empty".into(),
+        ));
+    }
+    if max_bytes == 0 {
+        return Err(RecordError::InvalidConfiguration(
+            "fragment max_bytes must be greater than zero".into(),
+        ));
+    }
+
+    let text = String::from_utf8_lossy(record.as_bytes());
+    let match_ranges = whole_word_match_ranges(&text, query);
+    if match_ranges.is_empty() {
+        return Ok(None);
+    }
+
+    let target_fragment_bytes = max_bytes.min(TARGET_EVIDENCE_FRAGMENT_BYTES);
+    let mut fragments = Vec::new();
+    let mut seen = HashSet::new();
+
+    for (match_start, match_end) in match_ranges {
+        if match_end - match_start > max_bytes {
+            return Err(RecordError::InvalidConfiguration(
+                "matching fragment exceeds max_bytes".into(),
+            ));
+        }
+
+        let window = bounded_text_window_around_match(
+            &text,
+            match_start,
+            match_end,
+            target_fragment_bytes,
+        );
+        if seen.insert(window.to_owned()) {
+            fragments.push(window);
+        }
+    }
+
+    if fragments.is_empty() {
+        return Ok(None);
+    }
+
+    let mut evidence = String::new();
+    for fragment in fragments {
+        let separator = usize::from(!evidence.is_empty());
+        if evidence.len() + separator + fragment.len() > max_bytes {
+            break;
+        }
+        if separator != 0 {
+            evidence.push('\n');
+        }
+        evidence.push_str(fragment);
+    }
+
+    Ok(Some(FragmentRecord {
+        index: record.index(),
+        record: evidence,
+    }))
+}
+
 pub fn getfragment(
     record: &DatasetRecord,
     query: &str,
@@ -328,7 +395,7 @@ fn bounded_text_fragments(
             ));
         }
 
-        let window = bounded_match_window(text, match_start, match_end, target_fragment_bytes);
+        let window = bounded_text_window_around_match(text, match_start, match_end, target_fragment_bytes);
         let key = window.to_owned();
 
         if seen.insert(key.clone()) {
@@ -342,51 +409,6 @@ fn bounded_text_fragments(
     }
 
     Ok(fragments)
-}
-
-fn bounded_match_window(text: &str, match_start: usize, match_end: usize, budget: usize) -> &str {
-    let match_bytes = match_end - match_start;
-    if match_bytes >= budget {
-        return &text[match_start..match_end];
-    }
-
-    let remaining = budget - match_bytes;
-    let left_budget = remaining / 2;
-    let right_budget = remaining - left_budget;
-
-    let mut start = floor_char_boundary(text, match_start.saturating_sub(left_budget));
-    let mut end = ceil_char_boundary(
-        text,
-        match_end.saturating_add(right_budget).min(text.len()),
-    );
-
-    while end - start > budget {
-        if end > match_end {
-            end = floor_char_boundary(text, end - 1);
-        } else if start < match_start {
-            start = ceil_char_boundary(text, start + 1);
-        } else {
-            break;
-        }
-    }
-
-    &text[start..end]
-}
-
-fn floor_char_boundary(text: &str, mut index: usize) -> usize {
-    index = index.min(text.len());
-    while index > 0 && !text.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
-}
-
-fn ceil_char_boundary(text: &str, mut index: usize) -> usize {
-    index = index.min(text.len());
-    while index < text.len() && !text.is_char_boundary(index) {
-        index += 1;
-    }
-    index
 }
 
 fn whole_word_match_ranges(text: &str, query: &str) -> Vec<(usize, usize)> {
@@ -440,11 +462,34 @@ fn contains_whole_words(text: &str, query: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::getfragment;
+    use super::{getfragment, getfragment_text};
     use crate::DatasetRecord;
 
     fn record(xml: &str) -> DatasetRecord {
         DatasetRecord::new(42, xml.as_bytes().to_vec())
+    }
+
+    #[test]
+    fn text_fragments_extract_bounded_evidence_around_matches() {
+        let record = DatasetRecord::new(
+            246,
+            b"CHAP. XXIV. Shu-sun Wu-shu having spoken revilingly of Chung-ni, Tsze-kung said, 'It is of no use doing so. Chung-ni cannot be reviled. The talents and virtue of other men are hillocks and mounds which may be stepped over.".to_vec(),
+        );
+
+        let result = getfragment_text(&record, "stepped", 64).unwrap().unwrap();
+
+        assert_eq!(result.index, 246);
+        assert!(result.record.contains("stepped"));
+        assert!(result.record.len() <= 64);
+    }
+
+    #[test]
+    fn text_fragments_reject_a_match_larger_than_the_budget() {
+        let record = DatasetRecord::new(1, b"supercalifragilisticexpialidocious".to_vec());
+
+        let result = getfragment_text(&record, "supercalifragilisticexpialidocious", 8);
+
+        assert!(result.is_err());
     }
 
     #[test]

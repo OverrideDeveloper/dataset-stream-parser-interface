@@ -126,7 +126,7 @@ impl DatasetRecord {
     /// Each retained top-level child becomes one named text element. Nested
     /// descendant text is flattened into the containing child, so the preview
     /// remains useful for search without retaining XML syntax.
-    pub(crate) fn preview(&self, config: &PreviewConfig) -> RecordResult<PreviewRecord> {
+    pub fn preview_xml(&self, config: &PreviewConfig) -> RecordResult<PreviewRecord> {
         config.validate()?;
 
         let mut reader = Reader::from_reader(self.bytes.as_slice());
@@ -199,6 +199,27 @@ impl DatasetRecord {
         Ok(PreviewRecord::new(self.index, elements))
     }
 
+    /// Build a bounded preview for a plain-text record.
+    ///
+    /// Plain text has no child-element structure, so the preview is represented
+    /// as one named "text" element. The bounded text window starts at the
+    /// beginning of the record and uses the same UTF-8 boundary machinery as
+    /// bounded evidence extraction.
+    pub fn preview_text(&self, config: &PreviewConfig) -> RecordResult<PreviewRecord> {
+        config.validate()?;
+
+        let text = String::from_utf8_lossy(&self.bytes);
+        let bounded = bounded_text_window_from_start(&text, config.target_bytes);
+
+        Ok(PreviewRecord::new(
+            self.index,
+            vec![PreviewElement {
+                name: "text".into(),
+                text: bounded.to_owned(),
+            }],
+        ))
+    }
+
     pub fn decode<T: DeserializeOwned>(&self) -> RecordResult<T> {
         quick_xml::de::from_reader(self.bytes.as_slice()).map_err(RecordError::decode)
     }
@@ -238,6 +259,74 @@ fn collect_element_text(
     }
 
     Ok(text)
+}
+
+/// Return a bounded UTF-8-safe window around a match.
+///
+/// This is the boundary algorithm used by bounded evidence extraction. The
+/// preview path uses the same mechanics with its anchor shifted to the start
+/// of the text rather than around a query match.
+pub(crate) fn bounded_text_window_around_match(
+    text: &str,
+    match_start: usize,
+    match_end: usize,
+    budget: usize,
+) -> &str {
+    if budget == 0 {
+        return "";
+    }
+
+    let match_bytes = match_end - match_start;
+    if match_bytes >= budget {
+        return &text[match_start..match_end];
+    }
+
+    let remaining = budget - match_bytes;
+    let left_budget = remaining / 2;
+    let right_budget = remaining - left_budget;
+
+    let mut start = floor_char_boundary(text, match_start.saturating_sub(left_budget));
+    let mut end = ceil_char_boundary(
+        text,
+        match_end.saturating_add(right_budget).min(text.len()),
+    );
+
+    while end - start > budget {
+        if end > match_end {
+            end = floor_char_boundary(text, end - 1);
+        } else if start < match_start {
+            start = ceil_char_boundary(text, start + 1);
+        } else {
+            break;
+        }
+    }
+
+    &text[start..end]
+}
+
+pub(crate) fn bounded_text_window_from_start(text: &str, budget: usize) -> &str {
+    if budget == 0 || text.is_empty() {
+        return "";
+    }
+
+    let end = ceil_char_boundary(text, budget.min(text.len()));
+    &text[..end]
+}
+
+fn floor_char_boundary(text: &str, mut index: usize) -> usize {
+    index = index.min(text.len());
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn ceil_char_boundary(text: &str, mut index: usize) -> usize {
+    index = index.min(text.len());
+    while index < text.len() && !text.is_char_boundary(index) {
+        index += 1;
+    }
+    index
 }
 
 pub trait RecordDecoder<T> {
@@ -285,7 +374,7 @@ mod tests {
 
     fn preview(xml: &str, config: PreviewConfig) -> super::PreviewRecord {
         let record = DatasetRecord::new(0, xml.as_bytes().to_vec());
-        record.preview(&config).unwrap()
+        record.preview_xml(&config).unwrap()
     }
 
     #[test]

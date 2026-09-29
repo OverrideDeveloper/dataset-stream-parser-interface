@@ -166,18 +166,24 @@ impl<R: BufRead> TextRecordStream<R> {
 
             let chunks = self.split_paragraph(&paragraph);
 
-            for chunk in chunks {
+            for (index, chunk) in chunks.iter().enumerate() {
                 if record.is_empty() {
-                    record = chunk;
-                } else if record.len() + chunk.len() <= target {
-                    record.push_str("\n");
-                    record.push_str(&chunk);
-                } else {
-                    self.pending_records.push(chunk);
-                    // Preserve the remaining chunks from this paragraph and
-                    // any later paragraphs in their original order.
-                    return Ok(Some(record));
+                    record.push_str(chunk);
+                    continue;
                 }
+
+                if record.len() + chunk.len() + 1 <= target {
+                    record.push('\n');
+                    record.push_str(chunk);
+                    continue;
+                }
+
+                // The current chunk did not fit. Queue it and every later
+                // chunk so the source order is preserved across calls.
+                for remaining in chunks[index..].iter().rev() {
+                    self.pending_records.push(remaining.clone());
+                }
+                return Ok(Some(record));
             }
         }
 
@@ -187,6 +193,7 @@ impl<R: BufRead> TextRecordStream<R> {
             Ok(Some(record))
         }
     }
+
 }
 
 impl<R: BufRead> RecordStream for TextRecordStream<R> {

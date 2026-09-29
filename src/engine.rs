@@ -3,6 +3,15 @@ use crate::{DatasetRecord, LoadedRecord, PreviewConfig, RecordError, RecordResul
 /// Re-openable source of dataset record streams.
 pub trait RecordSource {
     fn open(&self) -> RecordResult<Box<dyn RecordStream>>;
+
+    /// Build the prepared preview for one authoritative record.
+    ///
+    /// XML sources retain the historical structured preview by default. Other
+    /// source types can override this when their records have different
+    /// semantics, without making DatasetEngine format-aware.
+    fn preview(&self, record: &DatasetRecord, config: &PreviewConfig) -> RecordResult<LoadedRecord> {
+        record.preview_xml(config)
+    }
     fn open_from(&self, position: u64, record_index: u64) -> RecordResult<Box<dyn RecordStream>> {
         let _ = (position, record_index);
         self.open()
@@ -84,7 +93,7 @@ impl<S: RecordSource> DatasetEngine<S> {
         let mut checkpoints = Vec::new();
 
         while let Some(record) = stream.next_record()? {
-            loaded.push(record.preview(&self.preview_config)?);
+            loaded.push(self.source.preview(&record, &self.preview_config)?);
             let count = loaded.len();
             progress(count);
 

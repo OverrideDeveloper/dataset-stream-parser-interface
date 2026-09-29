@@ -395,11 +395,34 @@ fn contains_whole_words(text: &str, query: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::getfragment;
+    use super::{getfragment, getfragment_text};
     use crate::DatasetRecord;
 
     fn record(xml: &str) -> DatasetRecord {
         DatasetRecord::new(42, xml.as_bytes().to_vec())
+    }
+
+    #[test]
+    fn text_fragments_extract_bounded_evidence_around_matches() {
+        let record = DatasetRecord::new(
+            246,
+            b"CHAP. XXIV. Shu-sun Wu-shu having spoken revilingly of Chung-ni, Tsze-kung said, 'It is of no use doing so. Chung-ni cannot be reviled. The talents and virtue of other men are hillocks and mounds which may be stepped over.".to_vec(),
+        );
+
+        let result = getfragment_text(&record, "stepped", 64).unwrap().unwrap();
+
+        assert_eq!(result.index, 246);
+        assert!(result.record.contains("stepped"));
+        assert!(result.record.len() <= 64);
+    }
+
+    #[test]
+    fn text_fragments_reject_a_match_larger_than_the_budget() {
+        let record = DatasetRecord::new(1, b"supercalifragilisticexpialidocious".to_vec());
+
+        let result = getfragment_text(&record, "supercalifragilisticexpialidocious", 8);
+
+        assert!(result.is_err());
     }
 
     #[test]

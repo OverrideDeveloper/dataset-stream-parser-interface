@@ -151,12 +151,8 @@ impl<R: BufRead> TextRecordStream<R> {
     }
 
     fn next_chunk(&mut self) -> RecordResult<Option<String>> {
-        if let Some(record) = self.pending_records.pop() {
-            return Ok(Some(record));
-        }
-
         let target = self.config.target_record_bytes;
-        let mut record = String::new();
+        let mut record = self.pending_records.pop().unwrap_or_default();
 
         loop {
             let paragraph = match self.next_paragraph()? {

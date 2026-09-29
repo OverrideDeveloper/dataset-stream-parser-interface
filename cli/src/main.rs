@@ -173,7 +173,7 @@ enum CliRecordSource {
 impl CliRecordSource {
     fn configure_save(&self, path: &str) {
         if let Self::File(source) = self {
-            source.configure_save(path);
+            source.set_save_path(path.to_string());
         }
     }
 }
@@ -216,7 +216,7 @@ impl RecordSource for CliRecordSource {
 }
 
 fn configure_save(source: &CliRecordSource, path: &str) {
-    source.set_save_path(path.to_string());
+    source.configure_save(path);
 }
 
 fn print_record(record: &dataset_stream_parser_interface::DatasetRecord) {

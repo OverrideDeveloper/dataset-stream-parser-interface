@@ -119,9 +119,19 @@ impl<R: BufRead> TextRecordStream<R> {
             let target_end = start + target;
             let mut split_at = None;
 
-            for (offset, character) in paragraph[start..target_end].char_indices() {
+            // Find the last whitespace boundary whose resulting chunk is
+            // within the target. Iterate by char so target_end never becomes
+            // an invalid UTF-8 slice boundary.
+            for (offset, character) in paragraph[start..].char_indices() {
+                let position = start + offset;
+                let end = position + character.len_utf8();
+
+                if end > target_end {
+                    break;
+                }
+
                 if character.is_whitespace() {
-                    split_at = Some(start + offset + character.len_utf8());
+                    split_at = Some(end);
                 }
             }
 
@@ -133,7 +143,9 @@ impl<R: BufRead> TextRecordStream<R> {
                     paragraph[start..]
                         .char_indices()
                         .find_map(|(offset, character)| {
-                            character.is_whitespace().then_some(start + offset + character.len_utf8())
+                            character
+                                .is_whitespace()
+                                .then_some(start + offset + character.len_utf8())
                         })
                         .unwrap_or(paragraph.len())
                 }

@@ -321,7 +321,7 @@ mod tests {
         std::fs::write(root.join("ignored.xml"), "ignored").unwrap();
 
         let source = DirectoryRecordSource::with_config(
-            &root,
+            root.clone(),
             TextStreamConfig::default(),
             100,
         )
@@ -378,12 +378,12 @@ mod tests {
         let root = temp_folder("directory-sidecar");
         std::fs::write(root.join("a.txt"), "A one\n\nA two\n").unwrap();
 
-        let source = DirectoryRecordSource::new(&root).unwrap();
+        let source = DirectoryRecordSource::new(root.clone()).unwrap();
         let sidecar = source.sidecar_path().to_path_buf();
         assert!(sidecar.exists());
 
         std::fs::remove_file(&sidecar).unwrap();
-        let reloaded = DirectoryRecordSource::new(&root).unwrap();
+        let reloaded = DirectoryRecordSource::new(root.clone()).unwrap();
 
         assert!(reloaded.sidecar_path().exists());
         assert_eq!(reloaded.file_ranges().len(), 1);
@@ -400,7 +400,7 @@ mod tests {
         )
         .unwrap();
 
-        let source = DirectoryRecordSource::new(&root).unwrap();
+        let source = DirectoryRecordSource::new(root.clone()).unwrap();
         let mut engine = DatasetEngine::new(source);
 
         let previews = engine.prep().unwrap();

@@ -53,10 +53,11 @@ pub struct DatasetEngine<S> {
 
 impl<S: RecordSource> DatasetEngine<S> {
     pub fn new(source: S) -> Self {
+        let checkpoints = source.initial_checkpoints();
         Self {
             source,
             loaded: None,
-            checkpoints: source.initial_checkpoints(),
+            checkpoints,
             checkpoint_interval: 100,
             preview_config: PreviewConfig::default(),
         }

@@ -3,8 +3,8 @@ use std::io::BufRead;
 
 /// Configuration for a plain-text record stream.
 ///
-/// Text is divided into paragraphs at blank lines. Paragraphs are accumulated
-/// toward the configured target size. If a paragraph is larger than the target,
+/// Text is divided into paragraphs at blank lines. Each paragraph becomes a
+/// record unless it is larger than the configured target size, in which case
 /// it is split at whitespace boundaries rather than in the middle of a word.
 #[derive(Debug, Clone)]
 pub struct TextStreamConfig {
@@ -31,10 +31,9 @@ impl Default for TextStreamConfig {
 
 /// Streaming plain-text record reader.
 ///
-/// Blank lines delimit paragraphs. Paragraphs are combined until adding the
-/// next paragraph would exceed the target size. An oversized paragraph is
-/// divided at whitespace boundaries so generated records remain useful text
-/// rather than arbitrary byte slices.
+/// Blank lines delimit paragraphs. Each paragraph is a record boundary.
+/// An oversized paragraph is divided at whitespace boundaries so generated
+/// records remain useful text rather than arbitrary byte slices.
 pub struct TextRecordStream<R> {
     reader: R,
     config: TextStreamConfig,
@@ -151,43 +150,28 @@ impl<R: BufRead> TextRecordStream<R> {
     }
 
     fn next_chunk(&mut self) -> RecordResult<Option<String>> {
-        let target = self.config.target_record_bytes;
-        let mut record = self.pending_records.pop().unwrap_or_default();
-
-        loop {
-            let paragraph = match self.next_paragraph()? {
-                Some(paragraph) => paragraph,
-                None => break,
-            };
-
-            let chunks = self.split_paragraph(&paragraph);
-
-            for (index, chunk) in chunks.iter().enumerate() {
-                if record.is_empty() {
-                    record.push_str(chunk);
-                    continue;
-                }
-
-                if record.len() + chunk.len() + 1 <= target {
-                    record.push('\n');
-                    record.push_str(chunk);
-                    continue;
-                }
-
-                // The current chunk did not fit. Queue it and every later
-                // chunk so the source order is preserved across calls.
-                for remaining in chunks[index..].iter().rev() {
-                    self.pending_records.push(remaining.clone());
-                }
-                return Ok(Some(record));
-            }
+        if let Some(record) = self.pending_records.pop() {
+            return Ok(Some(record));
         }
 
-        if record.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(record))
-        }
+        let paragraph = match self.next_paragraph()? {
+            Some(paragraph) => paragraph,
+            None => return Ok(None),
+        };
+
+        let chunks = self.split_paragraph(&paragraph);
+        let mut chunks = chunks.into_iter();
+
+        let first = match chunks.next() {
+            Some(chunk) => chunk,
+            None => return Ok(None),
+        };
+
+        // An oversized paragraph may produce multiple records. Queue the
+        // remainder in reverse so the next call returns them in source order.
+        self.pending_records.extend(chunks.rev());
+
+        Ok(Some(first))
     }
 
 }
@@ -234,19 +218,6 @@ mod tests {
             vec![
                 "First paragraph.\n".to_string(),
                 "Second paragraph.\n".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn paragraphs_are_combined_toward_target() {
-        let result = records("one\n\ntwo\n\nthree\n", 10);
-
-        assert_eq!(
-            result,
-            vec![
-                "one\n\ntwo\n".to_string(),
-                "three\n".to_string()
             ]
         );
     }

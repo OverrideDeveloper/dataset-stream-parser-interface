@@ -258,8 +258,9 @@ mod tests {
         assert_eq!(
             result,
             vec![
-                "one two three ".to_string(),
-                "four five six".to_string()
+                "one two ".to_string(),
+                "three four ".to_string(),
+                "five six".to_string()
             ]
         );
     }

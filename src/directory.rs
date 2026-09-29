@@ -24,6 +24,8 @@ pub struct FileRecordRange {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DirectorySidecar {
     version: u32,
+    target_record_bytes: usize,
+    checkpoint_interval: u64,
     ranges: Vec<FileRecordRange>,
     checkpoints: Vec<Checkpoint>,
 }
@@ -140,6 +142,20 @@ impl DirectoryRecordSource {
                 sidecar.version
             )));
         }
+        if sidecar.target_record_bytes != self.text_config.target_record_bytes {
+            return Err(RecordError::InvalidConfiguration(format!(
+                "directory dataset sidecar was materialized with target_record_bytes {}, requested {}",
+                sidecar.target_record_bytes,
+                self.text_config.target_record_bytes
+            )));
+        }
+        if sidecar.checkpoint_interval != self.checkpoint_interval {
+            return Err(RecordError::InvalidConfiguration(format!(
+                "directory dataset sidecar was materialized with checkpoint interval {}, requested {}",
+                sidecar.checkpoint_interval,
+                self.checkpoint_interval
+            )));
+        }
 
         self.ranges = sidecar.ranges;
         self.checkpoints = sidecar.checkpoints;
@@ -224,6 +240,8 @@ impl DirectoryRecordSource {
 
         let sidecar = DirectorySidecar {
             version: SIDECAR_VERSION,
+            target_record_bytes: self.text_config.target_record_bytes,
+            checkpoint_interval: self.checkpoint_interval,
             ranges,
             checkpoints,
         };
@@ -240,6 +258,9 @@ impl DirectoryRecordSource {
             sidecar_file.write_all(sidecar_json.as_bytes())?;
             sidecar_file.write_all(b"\n")?;
             sidecar_file.flush()?;
+        }
+        if self.sidecar_path.exists() {
+            fs::remove_file(&self.sidecar_path)?;
         }
         fs::rename(&temporary_sidecar, &self.sidecar_path)?;
 
@@ -297,7 +318,7 @@ impl RecordSource for DirectoryRecordSource {
 #[cfg(test)]
 mod tests {
     use super::DirectoryRecordSource;
-    use crate::{DatasetEngine, RecordSource, TextStreamConfig};
+    use crate::{DatasetEngine, TextStreamConfig};
 
     fn temp_folder(name: &str) -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -357,7 +378,7 @@ mod tests {
         .unwrap();
 
         let source = DirectoryRecordSource::with_config(
-            &root,
+            root.clone(),
             TextStreamConfig::default(),
             2,
         )

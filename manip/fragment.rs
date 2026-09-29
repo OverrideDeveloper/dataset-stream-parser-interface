@@ -1,4 +1,4 @@
-use crate::{bounded_text_window_around_match, DatasetRecord, RecordError, RecordResult};
+use crate::{record::bounded_text_window_around_match, DatasetRecord, RecordError, RecordResult};
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use serde::{Deserialize, Serialize};

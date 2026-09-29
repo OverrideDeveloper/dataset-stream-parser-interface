@@ -1,6 +1,6 @@
 use bzip2::bufread::MultiBzDecoder;
 use dataset_stream_parser_interface::{
-    DatasetEngine, DirectoryRecordSource, PreviewConfig, PreviewRecord, RecordSource, RecordStream,
+    Checkpoint, DatasetEngine, DirectoryRecordSource, PreviewConfig, PreviewRecord, RecordSource, RecordStream,
     TextRecordStream, TextStreamConfig, XmlRecordStream, XmlStreamConfig,
 };
 use dataset_stream_parser_interface::manip::{getfragment_text, searchtogetfragment, FragmentRecord};
@@ -207,7 +207,7 @@ impl RecordSource for CliRecordSource {
         }
     }
 
-    fn initial_checkpoints(&self) -> Vec<dataset_stream_parser_interface::engine::Checkpoint> {
+    fn initial_checkpoints(&self) -> Vec<Checkpoint> {
         match self {
             Self::File(source) => source.initial_checkpoints(),
             Self::Directory(source) => source.initial_checkpoints(),

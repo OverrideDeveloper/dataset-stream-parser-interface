@@ -44,7 +44,74 @@ const TARGET_EVIDENCE_FRAGMENT_BYTES: usize = 512;
 ///
 /// No matched word or structural element is truncated. For oversized text,
 /// only the surrounding context is bounded.
-/// Extract bounded evidence from a plain-text record around whole-word matches.\n///\npub fn getfragment_text(\n    record: &DatasetRecord,\n    query: &str,\n    max_bytes: usize,\n) -> RecordResult<Option<FragmentRecord>> {\n    if query.trim().is_empty() {\n        return Err(RecordError::InvalidConfiguration(\n            "fragment query cannot be empty".into(),\n        ));\n    }\n    if max_bytes == 0 {\n        return Err(RecordError::InvalidConfiguration(\n            "fragment max_bytes must be greater than zero".into(),\n        ));\n    }\n\n    let text = String::from_utf8_lossy(record.as_bytes());\n    let match_ranges = whole_word_match_ranges(&text, query);\n    if match_ranges.is_empty() {\n        return Ok(None);\n    }\n\n    let target_fragment_bytes = max_bytes.min(TARGET_EVIDENCE_FRAGMENT_BYTES);\n    let mut fragments = Vec::new();\n    let mut seen = HashSet::new();\n\n    for (match_start, match_end) in match_ranges {\n        let window = bounded_text_window_around_match(\n            &text,\n            match_start,\n            match_end,\n            target_fragment_bytes,\n        );\n        if seen.insert(window.to_owned()) {\n            fragments.push(window);\n        }\n    }\n\n    if fragments.is_empty() {\n        return Ok(None);\n    }\n\n    let mut evidence = String::new();\n    for fragment in fragments {\n        let separator = usize::from(!evidence.is_empty());\n        if evidence.len() + separator + fragment.len() > max_bytes {\n            break;\n        }\n        if separator != 0 {\n            evidence.push('\\n');\n        }\n        evidence.push_str(fragment);\n    }\n\n    Ok(Some(FragmentRecord {\n        index: record.index(),\n        record: evidence,\n    }))\n}\n\npub fn getfragment(
+/// Extract bounded evidence from a plain-text record around whole-word matches.
+pub fn getfragment_text(
+    record: &DatasetRecord,
+    query: &str,
+    max_bytes: usize,
+) -> RecordResult<Option<FragmentRecord>> {
+    if query.trim().is_empty() {
+        return Err(RecordError::InvalidConfiguration(
+            "fragment query cannot be empty".into(),
+        ));
+    }
+    if max_bytes == 0 {
+        return Err(RecordError::InvalidConfiguration(
+            "fragment max_bytes must be greater than zero".into(),
+        ));
+    }
+
+    let text = String::from_utf8_lossy(record.as_bytes());
+    let match_ranges = whole_word_match_ranges(&text, query);
+    if match_ranges.is_empty() {
+        return Ok(None);
+    }
+
+    let target_fragment_bytes = max_bytes.min(TARGET_EVIDENCE_FRAGMENT_BYTES);
+    let mut fragments = Vec::new();
+    let mut seen = HashSet::new();
+
+    for (match_start, match_end) in match_ranges {
+        if match_end - match_start > max_bytes {
+            return Err(RecordError::InvalidConfiguration(
+                "matching fragment exceeds max_bytes".into(),
+            ));
+        }
+
+        let window = bounded_text_window_around_match(
+            &text,
+            match_start,
+            match_end,
+            target_fragment_bytes,
+        );
+        if seen.insert(window.to_owned()) {
+            fragments.push(window);
+        }
+    }
+
+    if fragments.is_empty() {
+        return Ok(None);
+    }
+
+    let mut evidence = String::new();
+    for fragment in fragments {
+        let separator = usize::from(!evidence.is_empty());
+        if evidence.len() + separator + fragment.len() > max_bytes {
+            break;
+        }
+        if separator != 0 {
+            evidence.push('\n');
+        }
+        evidence.push_str(fragment);
+    }
+
+    Ok(Some(FragmentRecord {
+        index: record.index(),
+        record: evidence,
+    }))
+}
+
+pub fn getfragment(
     record: &DatasetRecord,
     query: &str,
     max_bytes: usize,

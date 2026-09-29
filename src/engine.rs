@@ -1,8 +1,16 @@
 use crate::{manip::{getfragment, FragmentRecord}, DatasetRecord, LoadedRecord, PreviewConfig, RecordError, RecordResult, RecordStream};
+use serde::{Deserialize, Serialize};
 
 /// Re-openable source of dataset record streams.
 pub trait RecordSource {
     fn open(&self) -> RecordResult<Box<dyn RecordStream>>;
+
+    /// Return checkpoints persisted by the source itself, if any.
+    ///
+    /// These checkpoints make a persistent source directly retrievable without
+    /// requiring `prep()` to be run first. The default is an empty set so
+    /// existing sources retain their current behavior.
+    fn initial_checkpoints(&self) -> Vec<Checkpoint> { Vec::new() }
 
     /// Build the prepared preview for one authoritative record.
     ///
@@ -22,7 +30,7 @@ pub trait RecordSource {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Checkpoint {
     pub index: u64,
     pub position: u64,
@@ -48,7 +56,7 @@ impl<S: RecordSource> DatasetEngine<S> {
         Self {
             source,
             loaded: None,
-            checkpoints: Vec::new(),
+            checkpoints: source.initial_checkpoints(),
             checkpoint_interval: 100,
             preview_config: PreviewConfig::default(),
         }

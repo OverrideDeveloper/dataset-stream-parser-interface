@@ -280,7 +280,7 @@ pub(crate) fn bounded_text_window_around_match(
     // same algorithm: instead of centering on a query match, anchor the
     // bounded window at byte zero.
     if match_start == 0 && match_end == 0 {
-        let end = ceil_char_boundary(text, budget.min(text.len()));
+        let end = floor_char_boundary(text, budget.min(text.len()));
         return &text[..end];
     }
 
@@ -384,7 +384,7 @@ mod tests {
 
         assert_eq!(result.index(), 7);
         assert_eq!(result.elements()[0].name, "text");
-        assert_eq!(result.elements()[0].text, "alpha β");
+        assert_eq!(result.elements()[0].text, "alpha ");
         assert!(result.elements()[0].text.len() <= 7);
     }
 

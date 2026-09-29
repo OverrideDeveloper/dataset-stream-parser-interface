@@ -1,4 +1,4 @@
-use crate::{DatasetRecord, RecordError, RecordResult};
+use crate::{bounded_text_window_around_match, DatasetRecord, RecordError, RecordResult};
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use serde::{Deserialize, Serialize};
@@ -328,7 +328,7 @@ fn bounded_text_fragments(
             ));
         }
 
-        let window = bounded_match_window(text, match_start, match_end, target_fragment_bytes);
+        let window = bounded_text_window_around_match(text, match_start, match_end, target_fragment_bytes);
         let key = window.to_owned();
 
         if seen.insert(key.clone()) {
@@ -342,51 +342,6 @@ fn bounded_text_fragments(
     }
 
     Ok(fragments)
-}
-
-fn bounded_match_window(text: &str, match_start: usize, match_end: usize, budget: usize) -> &str {
-    let match_bytes = match_end - match_start;
-    if match_bytes >= budget {
-        return &text[match_start..match_end];
-    }
-
-    let remaining = budget - match_bytes;
-    let left_budget = remaining / 2;
-    let right_budget = remaining - left_budget;
-
-    let mut start = floor_char_boundary(text, match_start.saturating_sub(left_budget));
-    let mut end = ceil_char_boundary(
-        text,
-        match_end.saturating_add(right_budget).min(text.len()),
-    );
-
-    while end - start > budget {
-        if end > match_end {
-            end = floor_char_boundary(text, end - 1);
-        } else if start < match_start {
-            start = ceil_char_boundary(text, start + 1);
-        } else {
-            break;
-        }
-    }
-
-    &text[start..end]
-}
-
-fn floor_char_boundary(text: &str, mut index: usize) -> usize {
-    index = index.min(text.len());
-    while index > 0 && !text.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
-}
-
-fn ceil_char_boundary(text: &str, mut index: usize) -> usize {
-    index = index.min(text.len());
-    while index < text.len() && !text.is_char_boundary(index) {
-        index += 1;
-    }
-    index
 }
 
 fn whole_word_match_ranges(text: &str, query: &str) -> Vec<(usize, usize)> {

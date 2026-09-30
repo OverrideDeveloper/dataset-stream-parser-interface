@@ -605,7 +605,7 @@ mod tests {
 
     #[test]
     fn discards_evidence_above_the_noise_ratio_threshold() {
-        let noisy = format!("target{}{}", "[".repeat(11), "a".repeat(82));
+        let noisy = format!("target{}{}", "[".repeat(11), "a".repeat(83));
         assert!(getfragment(
             &record(&format!("<article><text>{noisy}</text></article>")),
             "target",
@@ -614,7 +614,7 @@ mod tests {
         .unwrap()
         .is_some());
 
-        let noisy = format!("target{}{}", "[".repeat(12), "a".repeat(81));
+        let noisy = format!("target{}{}", "[".repeat(12), "a".repeat(82));
         assert!(getfragment(
             &record(&format!("<article><text>{noisy}</text></article>")),
             "target",
@@ -623,7 +623,7 @@ mod tests {
         .unwrap()
         .is_none());
 
-        let plain = format!("target{}{}", "[".repeat(12), "a".repeat(81));
+        let plain = format!("target{}{}", "[".repeat(12), "a".repeat(82));
         let plain_record = DatasetRecord::new(43, plain.as_bytes().to_vec());
         assert!(getfragment_text(&plain_record, "target", 200)
             .unwrap()

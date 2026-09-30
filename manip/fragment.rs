@@ -215,6 +215,12 @@ pub fn getfragment(
 
     selected.sort_unstable();
 
+    let evidence = selected
+        .iter()
+        .map(|index| elements[*index].content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
     let text = selected
         .into_iter()
         .map(|index| elements[index].rendered())
@@ -223,7 +229,7 @@ pub fn getfragment(
 
     debug_assert!(text.len() <= max_bytes);
 
-    if !is_useful_evidence(&text) {
+    if !is_useful_evidence(&evidence) {
         return Ok(None);
     }
 

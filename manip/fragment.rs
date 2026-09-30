@@ -32,6 +32,8 @@ impl FragmentElement {
 const MAX_FRAGMENT_DEPTH: usize = 128;
 const MAX_FRAGMENT_ELEMENTS: usize = 100_000;
 const TARGET_EVIDENCE_FRAGMENT_BYTES: usize = 512;
+const EVIDENCE_NOISE_RATIO_LIMIT: f64 = 0.11;
+const EVIDENCE_NOISE_CHARS: &[char] = &['[', ']', '{', '}', '|', '<', '>', '=', '#'];
 
 /// Extract bounded evidence around whole-word matches.
 ///
@@ -84,7 +86,7 @@ pub fn getfragment_text(
             match_end,
             target_fragment_bytes,
         );
-        if seen.insert(window.to_owned()) {
+        if seen.insert(window.to_owned()) && is_useful_evidence(window) {
             fragments.push(window);
         }
     }
@@ -134,7 +136,9 @@ pub fn getfragment(
         .iter()
         .enumerate()
         .filter_map(|(index, element)| {
-            contains_whole_words(&element.content, query).then_some(index)
+            (contains_whole_words(&element.content, query)
+                && is_useful_evidence(&element.content))
+                .then_some(index)
         })
         .collect::<Vec<_>>();
 
@@ -398,7 +402,7 @@ fn bounded_text_fragments(
         let window = bounded_text_window_around_match(text, match_start, match_end, target_fragment_bytes);
         let key = window.to_owned();
 
-        if seen.insert(key.clone()) {
+        if seen.insert(key.clone()) && is_useful_evidence(&key) {
             fragments.push(FragmentElement {
                 name: name.to_owned(),
                 text: key.clone(),
@@ -458,6 +462,23 @@ fn word_ranges<'a>(text: &'a str) -> Vec<(usize, usize, &'a str)> {
 
 fn contains_whole_words(text: &str, query: &str) -> bool {
     !whole_word_match_ranges(text, query).is_empty()
+}
+
+fn is_useful_evidence(text: &str) -> bool {
+    let character_count = text.chars().count();
+
+    if character_count == 0 {
+        return false;
+    }
+
+    let non_alphanumeric_count = text
+        .chars()
+        .filter(|character| EVIDENCE_NOISE_CHARS.contains(character))
+        .count();
+
+    let noise_ratio = non_alphanumeric_count as f64 / character_count as f64;
+
+    noise_ratio <= EVIDENCE_NOISE_RATIO_LIMIT
 }
 
 #[cfg(test)]
@@ -580,6 +601,46 @@ mod tests {
         )
         .unwrap()
         .is_none());
+    }
+
+    #[test]
+    fn discards_evidence_above_the_noise_ratio_threshold() {
+        let noisy = format!("target{}{}", "[".repeat(11), "a".repeat(82));
+        assert!(getfragment(
+            &record(&format!("<article><text>{noisy}</text></article>")),
+            "target",
+            200,
+        )
+        .unwrap()
+        .is_some());
+
+        let noisy = format!("target{}{}", "[".repeat(12), "a".repeat(81));
+        assert!(getfragment(
+            &record(&format!("<article><text>{noisy}</text></article>")),
+            "target",
+            200,
+        )
+        .unwrap()
+        .is_none());
+
+        let plain = format!("target{}{}", "[".repeat(12), "a".repeat(81));
+        let plain_record = DatasetRecord::new(43, plain.as_bytes().to_vec());
+        assert!(getfragment_text(&plain_record, "target", 200)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn ignores_the_fragment_renderer_when_calculating_noise() {
+        let result = getfragment(
+            &record("<article><b>target</b></article>"),
+            "target",
+            100,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(result.record, "<b>: target");
     }
 
     #[test]

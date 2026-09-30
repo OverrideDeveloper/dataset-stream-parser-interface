@@ -104,6 +104,9 @@ pub fn getfragment_text(
         if separator != 0 {
             evidence.push('\n');
         }
+        if !is_useful_evidence(fragment) {
+            return Ok(None);
+        }
         evidence.push_str(fragment);
     }
 
@@ -158,6 +161,10 @@ pub fn getfragment(
             break;
         }
 
+        if !is_useful_evidence(&elements[index].content) {
+            return Ok(None);
+        }
+
         used += cost;
         selected.push(index);
     }
@@ -190,20 +197,36 @@ pub fn getfragment(
             (Some(left), Some(right), true, true)
                 if !selected.contains(&left) && !selected.contains(&right) =>
             {
+                if !is_useful_evidence(&elements[left].content) {
+                    return Ok(None);
+                }
+
                 used += left_cost.unwrap();
                 selected.push(left);
 
                 let right_cost = elements[right].rendered_bytes() + 1;
                 if used + right_cost <= max_bytes {
+                    if !is_useful_evidence(&elements[right].content) {
+                        return Ok(None);
+                    }
+
                     used += right_cost;
                     selected.push(right);
                 }
             }
             (Some(left), _, true, false) if !selected.contains(&left) => {
+                if !is_useful_evidence(&elements[left].content) {
+                    return Ok(None);
+                }
+
                 used += left_cost.unwrap();
                 selected.push(left);
             }
             (_, Some(right), false, true) if !selected.contains(&right) => {
+                if !is_useful_evidence(&elements[right].content) {
+                    return Ok(None);
+                }
+
                 used += right_cost.unwrap();
                 selected.push(right);
             }
@@ -514,6 +537,30 @@ mod tests {
         assert_eq!(result.index, 246);
         assert!(result.record.contains("stepped"));
         assert!(result.record.len() <= 64);
+    }
+
+    #[test]
+    fn rejects_a_noisy_plain_text_fragment_when_it_fits() {
+        let clean = "target useful evidence";
+        let noisy = format!("target{}{}", "[".repeat(12), "a".repeat(82));
+        let record = DatasetRecord::new(2, format!("{clean}\n{noisy}").into_bytes());
+
+        assert!(getfragment_text(&record, "target", 200).unwrap().is_none());
+    }
+
+    #[test]
+    fn rejects_a_noisy_xml_fragment_when_it_fits() {
+        let noisy = format!("target{}{}", "[".repeat(12), "a".repeat(82));
+        let result = getfragment(
+            &record(&format!(
+                "<article><title>target</title><text>{noisy}</text></article>"
+            )),
+            "target",
+            200,
+        )
+        .unwrap();
+
+        assert!(result.is_none());
     }
 
     #[test]

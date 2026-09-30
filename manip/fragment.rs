@@ -638,7 +638,7 @@ mod tests {
 
     #[test]
     fn gates_the_complete_constructed_fragment_including_neighbors() {
-        let noisy_neighbor = format!("target{}{}", "[".repeat(12), "a".repeat(82));
+        let noisy_neighbor = format!("{}{}", "[".repeat(12), "a".repeat(82));
         let result = getfragment(
             &record(&format!(
                 "<article><title>target</title><text>{noisy_neighbor}</text></article>"

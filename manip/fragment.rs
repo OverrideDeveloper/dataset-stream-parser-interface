@@ -86,7 +86,7 @@ pub fn getfragment_text(
             match_end,
             target_fragment_bytes,
         );
-        if seen.insert(window.to_owned()) && is_useful_evidence(window) {
+        if seen.insert(window.to_owned()) {
             fragments.push(window);
         }
     }
@@ -105,6 +105,10 @@ pub fn getfragment_text(
             evidence.push('\n');
         }
         evidence.push_str(fragment);
+    }
+
+    if !is_useful_evidence(&evidence) {
+        return Ok(None);
     }
 
     Ok(Some(FragmentRecord {
@@ -136,9 +140,7 @@ pub fn getfragment(
         .iter()
         .enumerate()
         .filter_map(|(index, element)| {
-            (contains_whole_words(&element.content, query)
-                && is_useful_evidence(&element.content))
-                .then_some(index)
+            contains_whole_words(&element.content, query).then_some(index)
         })
         .collect::<Vec<_>>();
 
@@ -220,6 +222,10 @@ pub fn getfragment(
         .join("\n");
 
     debug_assert!(text.len() <= max_bytes);
+
+    if !is_useful_evidence(&text) {
+        return Ok(None);
+    }
 
     Ok(Some(FragmentRecord {
         index: record.index(),
@@ -402,7 +408,7 @@ fn bounded_text_fragments(
         let window = bounded_text_window_around_match(text, match_start, match_end, target_fragment_bytes);
         let key = window.to_owned();
 
-        if seen.insert(key.clone()) && is_useful_evidence(&key) {
+        if seen.insert(key.clone()) {
             fragments.push(FragmentElement {
                 name: name.to_owned(),
                 text: key.clone(),
@@ -628,6 +634,21 @@ mod tests {
         assert!(getfragment_text(&plain_record, "target", 200)
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn gates_the_complete_constructed_fragment_including_neighbors() {
+        let noisy_neighbor = format!("target{}{}", "[".repeat(12), "a".repeat(82));
+        let result = getfragment(
+            &record(&format!(
+                "<article><title>target</title><text>{noisy_neighbor}</text></article>"
+            )),
+            "target",
+            200,
+        )
+        .unwrap();
+
+        assert!(result.is_none());
     }
 
     #[test]

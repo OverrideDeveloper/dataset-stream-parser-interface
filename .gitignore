@@ -1,0 +1,21 @@
+# Rust / Cargo
+target/
+Cargo.lock
+
+# Rust Analyzer
+.rust-analyzer/
+
+# IDE/editor
+.vscode/
+.idea/
+
+# OS/editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Local environment files
+.env
+.env.local

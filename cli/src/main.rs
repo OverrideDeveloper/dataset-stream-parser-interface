@@ -1,8 +1,9 @@
 use bzip2::bufread::MultiBzDecoder;
 use dataset_stream_parser_interface::{
-    DatasetEngine, PreviewRecord, RecordStream, XmlRecordStream, XmlStreamConfig,
+    Checkpoint, DatasetEngine, DirectoryRecordSource, PreviewConfig, PreviewRecord, RecordSource, RecordStream,
+    TextRecordStream, TextStreamConfig, XmlRecordStream, XmlStreamConfig,
 };
-use dataset_stream_parser_interface::manip::{getfragment, searchtogetfragment};
+use dataset_stream_parser_interface::manip::{getfragment_text, searchtogetfragment, FragmentRecord};
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Seek, Write};
@@ -10,6 +11,7 @@ use std::io::{self, BufRead, BufReader, Read, Seek, Write};
 struct FileRecordSource {
     path: String,
     record_element: String,
+    text: bool,
     save_path: RefCell<Option<String>>,
 }
 
@@ -73,14 +75,46 @@ impl FileRecordSource {
             Box::new(BufReader::new(file))
         };
 
-        Ok(Box::new(XmlRecordStream::new(
-            input,
-            XmlStreamConfig::new(self.record_element.clone()),
-        )?.with_record_index(start_index)))
+        if self.text {
+            Ok(Box::new(TextRecordStream::new(
+                input,
+                TextStreamConfig::default(),
+            )?.with_record_index(start_index)))
+        } else {
+            Ok(Box::new(XmlRecordStream::new(
+                input,
+                XmlStreamConfig::new(self.record_element.clone()),
+            )?.with_record_index(start_index)))
+        }
     }
 }
 
 impl dataset_stream_parser_interface::RecordSource for FileRecordSource {
+    fn fragment(
+        &self,
+        record: &dataset_stream_parser_interface::DatasetRecord,
+        query: &str,
+        max_bytes: usize,
+    ) -> dataset_stream_parser_interface::RecordResult<Option<FragmentRecord>> {
+        if self.text {
+            getfragment_text(record, query, max_bytes)
+        } else {
+            dataset_stream_parser_interface::manip::getfragment(record, query, max_bytes)
+        }
+    }
+
+    fn preview(
+        &self,
+        record: &dataset_stream_parser_interface::DatasetRecord,
+        config: &PreviewConfig,
+    ) -> dataset_stream_parser_interface::RecordResult<PreviewRecord> {
+        if self.text {
+            record.preview_text(config)
+        } else {
+            record.preview_xml(config)
+        }
+    }
+
     fn open(&self) -> dataset_stream_parser_interface::RecordResult<Box<dyn RecordStream>> {
         self.open_input(None, 0, true).map_err(|error| {
             dataset_stream_parser_interface::RecordError::Io(std::io::Error::other(error.to_string()))
@@ -100,25 +134,24 @@ impl dataset_stream_parser_interface::RecordSource for FileRecordSource {
 
 
 
-#[allow(dead_code)]
-fn open_source(
-    path: &str,
-    record_element: &str,
-) -> Result<Box<dyn RecordStream>, Box<dyn std::error::Error>> {
-    let file = File::open(path)?;
-    let input: Box<dyn BufRead> = if path.to_ascii_lowercase().ends_with(".bz2") {
-        Box::new(BufReader::new(MultiBzDecoder::new(BufReader::new(file))))
-    } else {
-        Box::new(BufReader::new(file))
-    };
-
-    Ok(Box::new(XmlRecordStream::new(
-        input,
-        XmlStreamConfig::new(record_element.to_string()),
-    )?))
-}
-
 impl dataset_stream_parser_interface::RecordSource for &FileRecordSource {
+    fn fragment(
+        &self,
+        record: &dataset_stream_parser_interface::DatasetRecord,
+        query: &str,
+        max_bytes: usize,
+    ) -> dataset_stream_parser_interface::RecordResult<Option<FragmentRecord>> {
+        (*self).fragment(record, query, max_bytes)
+    }
+
+    fn preview(
+        &self,
+        record: &dataset_stream_parser_interface::DatasetRecord,
+        config: &PreviewConfig,
+    ) -> dataset_stream_parser_interface::RecordResult<PreviewRecord> {
+        (*self).preview(record, config)
+    }
+
     fn open(&self) -> dataset_stream_parser_interface::RecordResult<Box<dyn RecordStream>> {
         (*self).open()
     }
@@ -132,8 +165,58 @@ impl dataset_stream_parser_interface::RecordSource for &FileRecordSource {
     }
 }
 
-fn configure_save(source: &FileRecordSource, path: &str) {
-    source.set_save_path(path.to_string());
+enum CliRecordSource {
+    File(FileRecordSource),
+    Directory(DirectoryRecordSource),
+}
+
+impl CliRecordSource {
+    fn configure_save(&self, path: &str) {
+        if let Self::File(source) = self {
+            source.set_save_path(path.to_string());
+        }
+    }
+}
+
+impl RecordSource for CliRecordSource {
+    fn fragment(&self, record: &dataset_stream_parser_interface::DatasetRecord, query: &str, max_bytes: usize) -> dataset_stream_parser_interface::RecordResult<Option<FragmentRecord>> {
+        match self {
+            Self::File(source) => source.fragment(record, query, max_bytes),
+            Self::Directory(source) => source.fragment(record, query, max_bytes),
+        }
+    }
+
+    fn preview(&self, record: &dataset_stream_parser_interface::DatasetRecord, config: &PreviewConfig) -> dataset_stream_parser_interface::RecordResult<PreviewRecord> {
+        match self {
+            Self::File(source) => source.preview(record, config),
+            Self::Directory(source) => source.preview(record, config),
+        }
+    }
+
+    fn open(&self) -> dataset_stream_parser_interface::RecordResult<Box<dyn RecordStream>> {
+        match self {
+            Self::File(source) => source.open(),
+            Self::Directory(source) => source.open(),
+        }
+    }
+
+    fn open_from(&self, position: u64, record_index: u64) -> dataset_stream_parser_interface::RecordResult<Box<dyn RecordStream>> {
+        match self {
+            Self::File(source) => source.open_from(position, record_index),
+            Self::Directory(source) => source.open_from(position, record_index),
+        }
+    }
+
+    fn initial_checkpoints(&self) -> Vec<Checkpoint> {
+        match self {
+            Self::File(source) => source.initial_checkpoints(),
+            Self::Directory(source) => source.initial_checkpoints(),
+        }
+    }
+}
+
+fn configure_save(source: &CliRecordSource, path: &str) {
+    source.configure_save(path);
 }
 
 fn print_record(record: &dataset_stream_parser_interface::DatasetRecord) {
@@ -190,20 +273,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args();
     let program = args.next().unwrap_or_else(|| "dataset-stream-parser-cli".into());
     let path = args.next().ok_or_else(|| {
-        format!("usage: {program} <dataset.xml|dataset.xml.bz2> [record-element]")
+        format!("usage: {program} <dataset-folder|dataset.xml|dataset.xml.bz2|dataset.txt|dataset.txt.bz2> [record-element]")
     })?;
     let record_element = args.next().unwrap_or_else(|| "page".into());
+    let input_path = std::path::Path::new(&path);
+    let is_directory = input_path.is_dir();
 
-    let source = FileRecordSource {
-        path: path.clone(),
-        record_element: record_element.clone(),
-        save_path: RefCell::new(None),
+    let source = if is_directory {
+        if args.next().is_some() {
+            return Err("record-element is not used with folder datasets".into());
+        }
+        CliRecordSource::Directory(DirectoryRecordSource::new(input_path)?)
+    } else {
+        let lowercase_path = path.to_ascii_lowercase();
+        let dataset_path = lowercase_path.strip_suffix(".bz2").unwrap_or(&lowercase_path);
+        let text = dataset_path.ends_with(".txt");
+
+        CliRecordSource::File(FileRecordSource {
+            path: path.clone(),
+            record_element: record_element.clone(),
+            text,
+            save_path: RefCell::new(None),
+        })
     };
-    let mut engine = DatasetEngine::new(&source);
+    let is_compressed_file = !is_directory && path.to_ascii_lowercase().ends_with(".bz2");
+    let mut engine = DatasetEngine::new(source);
 
     println!("Dataset CLI");
     println!("  dataset: {path}");
-    println!("  record:  <{record_element}>");
+    if is_directory {
+        println!("  format:  flat TXT folder");
+        println!("  record:  paragraph / bounded text chunk");
+    } else {
+        let lowercase_path = path.to_ascii_lowercase();
+        let dataset_path = lowercase_path.strip_suffix(".bz2").unwrap_or(&lowercase_path);
+        if dataset_path.ends_with(".txt") {
+            println!("  format:  plain text");
+            println!("  record:  paragraph / bounded text chunk");
+        } else {
+            println!("  format:  XML");
+            println!("  record:  <{record_element}>");
+        }
+    }
     println!("Type 'help' for commands.");
 
     let stdin = io::stdin();
@@ -259,7 +370,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
 
-            if save && !path.to_ascii_lowercase().ends_with(".bz2") {
+            if save && !is_compressed_file {
                 eprintln!("error: --save is only valid for .bz2 datasets");
                 continue;
             }
@@ -291,11 +402,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             if let Some(target) = &save_path {
-                configure_save(&source, target);
+                configure_save(engine.source(), target);
                 println!("Saving decompressed corpus to: {target}");
             }
 
-            println!("Preparing bounded named-text previews (target 4 KiB, stop at <title>, max 10 children)...");
+            if is_directory {
+                println!("Preparing bounded text previews (target 4 KiB, starting at the beginning of each record)...");
+            } else {
+                println!("Preparing bounded named-text previews (target 4 KiB, stop at <title>, max 10 children)...");
+            }
             let result = engine.prep_with_progress(|count| {
                 if count % 10_000 == 0 {
                     print!("\rPrepared {count} records...");
@@ -450,16 +565,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            match engine.get(index) {
-                Ok(Some(record)) => match getfragment(&record, query, limit) {
-                    Ok(Some(fragment)) => {
-                        println!("#{} ({} bytes):", fragment.index, fragment.record.len());
-                        println!("{}", fragment.record);
-                    }
-                    Ok(None) => println!("no match for query in record #{index}"),
-                    Err(error) => eprintln!("error: {error:?}"),
-                },
-                Ok(None) => println!("record #{index} not found"),
+            match engine.get_fragment(index, query, limit) {
+                Ok(Some(fragment)) => {
+                    println!("#{} ({} bytes):", fragment.index, fragment.record.len());
+                    println!("{}", fragment.record);
+                }
+                Ok(None) => println!("no match for query in record #{index}"),
                 Err(error) => eprintln!("error: {error:?}"),
             }
             continue;

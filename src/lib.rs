@@ -1,16 +1,20 @@
 //! Streaming dataset record interfaces.
 
+mod directory;
 mod engine;
 #[path = "../manip/mod.rs"]
 pub mod manip;
 mod record;
+pub mod text;
 pub mod xml;
 
+pub use directory::{DirectoryRecordSource, FileRecordRange};
 pub use engine::{Checkpoint, DatasetEngine, RecordSource};
 pub use record::{
     DatasetRecord, LoadedRecord, PreviewConfig, PreviewElement, PreviewRecord, RecordDecoder,
     RecordError, RecordResult,
 };
+pub use text::{TextRecordStream, TextStreamConfig};
 pub use xml::{XmlRecordStream, XmlStreamConfig};
 
 /// A source of bounded dataset records.

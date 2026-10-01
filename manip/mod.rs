@@ -1,6 +1,6 @@
 mod fragment;
 
-pub use fragment::{getfragment, FragmentRecord};
+pub use fragment::{getfragment, getfragment_text, FragmentRecord};
 
 use crate::{DatasetEngine, RecordError, RecordResult, RecordSource};
 
@@ -34,10 +34,8 @@ pub fn searchtogetfragment<S: RecordSource>(
     let mut fragments = Vec::new();
 
     for index in indexes {
-        if let Some(record) = engine.get(index)? {
-            if let Some(fragment) = getfragment(&record, query, max_bytes)? {
-                fragments.push(fragment);
-            }
+        if let Some(fragment) = engine.get_fragment(index, query, max_bytes)? {
+            fragments.push(fragment);
         }
     }
 

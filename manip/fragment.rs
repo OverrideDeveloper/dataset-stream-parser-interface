@@ -80,62 +80,160 @@ fn validate_fragment_request(query: &str, max_bytes: usize) -> RecordResult<()> 
 /// constructs such as [[...]] and '''...''' remain text; template blocks are
 /// discarded as source markup noise. This engine deliberately does not attempt
 /// to interpret higher-level Wiki markup.
+/// Project XML into text suitable for lexical evidence extraction.
+///
+/// Wikipedia XML is handled as a special projection: when a text element with
+/// xml:space="preserve" occurs inside a page, only that payload is projected.
+/// This keeps page metadata from becoming part of the evidence search space.
+/// Other XML is projected generically, and non-XML text is left to the same
+/// plain-text path used by getfragment_text.
 fn clean_xml_text(bytes: &[u8]) -> RecordResult<String> {
     let mut reader = Reader::from_reader(bytes);
     reader.config_mut().trim_text(false);
 
     let mut buffer = Vec::new();
-    let mut text = String::new();
-    let mut ignored_ref_depth = 0usize;
+    let mut generic_text = String::new();
+    let mut wiki_text = String::new();
     let mut pending_space = false;
+    let mut wiki_pending_space = false;
+    let mut page_depth = 0usize;
+    let mut wiki_text_depth = 0usize;
+    let mut ignored_ref_depth = 0usize;
+    let mut saw_xml_event = false;
+    let mut saw_wiki_text = false;
 
     loop {
         buffer.clear();
 
         match reader.read_event_into(&mut buffer)? {
             Event::Start(event) => {
+                saw_xml_event = true;
                 let name = String::from_utf8_lossy(event.name().as_ref()).into_owned();
-                if name.eq_ignore_ascii_case("ref") {
-                    ignored_ref_depth += 1;
+
+                if name.eq_ignore_ascii_case("page") {
+                    page_depth += 1;
                 }
-                if !text.is_empty() {
-                    pending_space = true;
+
+                if wiki_text_depth > 0 {
+                    if name.eq_ignore_ascii_case("ref") {
+                        ignored_ref_depth += 1;
+                    }
+                    append_projected_event_space(&mut wiki_text, &mut wiki_pending_space);
+                } else if page_depth > 0
+                    && name.eq_ignore_ascii_case("text")
+                    && has_xml_space_preserve(event.attributes())
+                {
+                    wiki_text_depth = 1;
+                    saw_wiki_text = true;
+                    wiki_pending_space = false;
                 }
+
+                append_projected_event_space(&mut generic_text, &mut pending_space);
             }
             Event::End(event) => {
+                saw_xml_event = true;
                 let name = String::from_utf8_lossy(event.name().as_ref()).into_owned();
-                if name.eq_ignore_ascii_case("ref") && ignored_ref_depth > 0 {
-                    ignored_ref_depth -= 1;
+
+                if wiki_text_depth > 0 {
+                    if name.eq_ignore_ascii_case("ref") && ignored_ref_depth > 0 {
+                        ignored_ref_depth -= 1;
+                    }
+
+                    if name.eq_ignore_ascii_case("text") && wiki_text_depth == 1 {
+                        wiki_text_depth = 0;
+                    } else {
+                        wiki_pending_space = true;
+                    }
                 }
+
+                if name.eq_ignore_ascii_case("page") && page_depth > 0 {
+                    page_depth -= 1;
+                }
+
                 pending_space = true;
             }
             Event::Empty(event) => {
+                saw_xml_event = true;
                 let name = String::from_utf8_lossy(event.name().as_ref()).into_owned();
-                if !name.eq_ignore_ascii_case("ref") && !text.is_empty() {
-                    pending_space = true;
+
+                if wiki_text_depth > 0 && !name.eq_ignore_ascii_case("ref") {
+                    wiki_pending_space = true;
                 }
+
+                append_projected_event_space(&mut generic_text, &mut pending_space);
             }
             Event::Text(event) => {
-                if ignored_ref_depth == 0 {
-                    append_clean_text(&mut text, &mut pending_space, event.as_ref());
+                saw_xml_event = true;
+                let value = event.as_ref();
+
+                if wiki_text_depth > 0 && ignored_ref_depth == 0 {
+                    append_clean_text(&mut wiki_text, &mut wiki_pending_space, value);
                 }
+                append_clean_text(&mut generic_text, &mut pending_space, value);
             }
             Event::CData(event) => {
-                if ignored_ref_depth == 0 {
-                    append_clean_text(&mut text, &mut pending_space, event.as_ref());
+                saw_xml_event = true;
+                let value = event.as_ref();
+
+                if wiki_text_depth > 0 && ignored_ref_depth == 0 {
+                    append_clean_text(&mut wiki_text, &mut wiki_pending_space, value);
                 }
+                append_clean_text(&mut generic_text, &mut pending_space, value);
             }
             Event::GeneralRef(_) => {
-                if ignored_ref_depth == 0 {
-                    pending_space = true;
+                saw_xml_event = true;
+
+                if wiki_text_depth > 0 && ignored_ref_depth == 0 {
+                    wiki_pending_space = true;
                 }
+                pending_space = true;
             }
             Event::Eof => break,
-            _ => {}
+            _ => saw_xml_event = true,
         }
     }
 
-    Ok(remove_template_blocks(text.trim()))
+    if saw_wiki_text {
+        return Ok(clean_wikipedia_text(wiki_text));
+    }
+
+    if saw_xml_event {
+        return Ok(remove_template_blocks(generic_text.trim()));
+    }
+
+    Ok(String::from_utf8_lossy(bytes).into_owned())
+}
+
+fn has_xml_space_preserve<'a>(
+    attributes: quick_xml::events::attributes::Attributes<'a>,
+) -> bool {
+    attributes.flatten().any(|attribute| {
+        let key = String::from_utf8_lossy(attribute.key.as_ref());
+        if !key.eq_ignore_ascii_case("xml:space") {
+            return false;
+        }
+
+        attribute
+            .unescape_value()
+            .map(|value| value.eq_ignore_ascii_case("preserve"))
+            .unwrap_or(false)
+    })
+}
+
+fn append_projected_event_space(output: &mut String, pending_space: &mut bool) {
+    if !output.is_empty() {
+        *pending_space = true;
+    }
+}
+
+fn clean_wikipedia_text(text: String) -> String {
+    let text = text.replace("\\n", "");
+    let text = match text.find("== References ==") {
+        Some(index) => &text[..index],
+        None => &text,
+    };
+
+    remove_template_blocks(text.trim())
 }
 
 fn remove_template_blocks(text: &str) -> String {
@@ -441,6 +539,78 @@ mod tests {
         assert!(result.record.contains("mechanical general-purpose computer"));
         assert!(!result.record.contains("<revision>"));
         assert!(result.record.len() <= 96);
+    }
+
+    #[test]
+    fn wikipedia_projection_anchors_on_article_text_not_page_metadata() {
+        let result = getfragment(
+            &record(
+                r#"<page>
+                    <title>Analytical Engine</title>
+                    <id>123</id>
+                    <revision>
+                        <id>456</id>
+                        <text xml:space="preserve">The Analytical Engine was a proposed mechanical general-purpose computer. \n [[Charles Babbage]] described it in detail.</text>
+                    </revision>
+                </page>"#,
+            ),
+            "Analytical Engine",
+            256,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(result.record.starts_with("The Analytical Engine"));
+        assert!(!result.record.contains("<page>"));
+        assert!(!result.record.contains("123"));
+        assert!(!result.record.contains("456"));
+        assert!(!result.record.contains(r#"\n"#));
+    }
+
+    #[test]
+    fn wikipedia_projection_stops_at_references_heading() {
+        let result = getfragment(
+            &record(
+                r#"<page><title>Analytical Engine</title><revision><text xml:space="preserve">The Analytical Engine was a proposed computer. More article text.
+
+== References ==
+* The Analytical Engine reference contains the target term.</text></revision></page>"#,
+            ),
+            "Analytical Engine",
+            512,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(result.record.contains("The Analytical Engine was a proposed computer."));
+        assert!(!result.record.contains("== References =="));
+        assert!(!result.record.contains("reference contains"));
+    }
+
+    #[test]
+    fn non_wikipedia_xml_keeps_generic_xml_projection() {
+        let result = getfragment(
+            &record("<catalog><title>Analytical Engine</title><description>Mechanical computing history.</description></catalog>"),
+            "Analytical Engine",
+            128,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(result.record.contains("Analytical Engine"));
+        assert!(result.record.contains("Mechanical computing history."));
+    }
+
+    #[test]
+    fn wikipedia_projection_keeps_actual_newlines() {
+        let result = clean_xml_text(
+            br#"<page><revision><text xml:space="preserve">first line
+second line\nthird line</text></revision></page>"#,
+        )
+        .unwrap();
+
+        assert!(result.contains("first line\nsecond line"));
+        assert!(result.contains("second linethird line"));
     }
 
     #[test]

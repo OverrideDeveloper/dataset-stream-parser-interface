@@ -72,7 +72,7 @@ mod tests {
         assert_eq!(results[0].index, 0);
         assert_eq!(
             results[0].record,
-            "<author>: E. F. Codd\n<title>: Relational Algebra\n<year>: 1970"
+            "E. F. Codd Relational Algebra 1970"
         );
         assert_eq!(results[1].index, 2);
     }

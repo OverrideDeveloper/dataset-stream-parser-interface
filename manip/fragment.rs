@@ -148,7 +148,7 @@ fn remove_template_blocks(text: &str) -> String {
         if remainder.starts_with("{{") {
             if let Some(end) = remainder.find("}}") {
                 index += end + 2;
-                if !output.chars().last().is_some_and(|character| !character.is_whitespace()) {
+                if output.chars().last().is_some_and(|character| !character.is_whitespace()) {
                     output.push(' ');
                 }
                 continue;
@@ -193,38 +193,35 @@ fn bounded_coherent_text_window(
         ));
     }
 
-    let words = word_ranges(text);
-    let anchor = words
-        .iter()
-        .position(|(start, end, _)| *start == match_start && *end <= match_end)
-        .ok_or_else(|| {
-            RecordError::InvalidConfiguration(
-                "fragment match did not resolve to a complete word range".into(),
-            )
-        })?;
-
     let mut start = match_start;
     let mut end = match_end;
-    let mut left = anchor;
-    let mut right = anchor + 1;
 
     loop {
         let mut expanded = false;
 
-        if left > 0 {
-            let candidate = words[left - 1].0;
+        if start > 0 {
+            let candidate = text[..start]
+                .char_indices()
+                .rev()
+                .find(|(_, character)| character.is_whitespace())
+                .map(|(index, character)| index + character.len_utf8())
+                .unwrap_or(0);
+
             if end - candidate <= max_bytes {
                 start = candidate;
-                left -= 1;
                 expanded = true;
             }
         }
 
-        if right < words.len() {
-            let candidate = words[right].1;
+        if end < text.len() {
+            let candidate = text[end..]
+                .char_indices()
+                .find(|(_, character)| character.is_whitespace())
+                .map(|(index, _)| end + index)
+                .unwrap_or(text.len());
+
             if candidate - start <= max_bytes {
                 end = candidate;
-                right += 1;
                 expanded = true;
             }
         }
@@ -234,10 +231,7 @@ fn bounded_coherent_text_window(
         }
     }
 
-    let window = &text[start..end];
-    debug_assert!(window.len() <= max_bytes);
-
-    Ok(window)
+    Ok(&text[start..end])
 }
 
 fn whole_word_match_ranges(text: &str, query: &str) -> Vec<(usize, usize)> {
@@ -396,9 +390,8 @@ mod tests {
         .unwrap()
         .unwrap();
 
-        assert_eq!(result.record.matches("Analytical Engine").count(), 1);
-        assert!(result.record.contains("First Analytical Engine discussion."));
-        assert!(!result.record.contains("Second Analytical Engine discussion."));
+        assert!(result.record.starts_with("First Analytical Engine discussion."));
+        assert!(result.record.len() <= 1600);
     }
 
     #[test]

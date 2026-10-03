@@ -207,7 +207,7 @@ fn bounded_coherent_text_window(
                 .map(|(index, character)| index + character.len_utf8())
                 .unwrap_or(0);
 
-            if end - candidate <= max_bytes {
+            if candidate < start && end - candidate <= max_bytes {
                 start = candidate;
                 expanded = true;
             }
@@ -220,7 +220,7 @@ fn bounded_coherent_text_window(
                 .map(|(index, _)| end + index)
                 .unwrap_or(text.len());
 
-            if candidate - start <= max_bytes {
+            if candidate > end && candidate - start <= max_bytes {
                 end = candidate;
                 expanded = true;
             }

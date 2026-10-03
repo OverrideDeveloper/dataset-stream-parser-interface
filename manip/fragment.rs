@@ -200,12 +200,7 @@ fn bounded_coherent_text_window(
         let mut expanded = false;
 
         if start > 0 {
-            let candidate = text[..start]
-                .char_indices()
-                .rev()
-                .find(|(_, character)| character.is_whitespace())
-                .map(|(index, character)| index + character.len_utf8())
-                .unwrap_or(0);
+            let candidate = previous_text_boundary(text, start);
 
             if candidate < start && end - candidate <= max_bytes {
                 start = candidate;
@@ -214,11 +209,7 @@ fn bounded_coherent_text_window(
         }
 
         if end < text.len() {
-            let candidate = text[end..]
-                .char_indices()
-                .find(|(_, character)| character.is_whitespace())
-                .map(|(index, _)| end + index)
-                .unwrap_or(text.len());
+            let candidate = next_text_boundary(text, end);
 
             if candidate > end && candidate - start <= max_bytes {
                 end = candidate;
@@ -232,6 +223,49 @@ fn bounded_coherent_text_window(
     }
 
     Ok(&text[start..end])
+}
+
+fn previous_text_boundary(text: &str, start: usize) -> usize {
+    let mut boundary = start;
+    let mut cursor = start;
+
+    while cursor > 0 {
+        let Some((index, character)) = text[..cursor].char_indices().next_back() else {
+            break;
+        };
+
+        if !character.is_whitespace() {
+            break;
+        }
+
+        cursor = index;
+        boundary = index;
+    }
+
+    text[..cursor]
+        .char_indices()
+        .rev()
+        .find(|(_, character)| character.is_whitespace())
+        .map(|(index, character)| index + character.len_utf8())
+        .unwrap_or(0)
+}
+
+fn next_text_boundary(text: &str, end: usize) -> usize {
+    let mut cursor = end;
+
+    while cursor < text.len() {
+        let character = text[cursor..].chars().next().unwrap();
+        if !character.is_whitespace() {
+            break;
+        }
+        cursor += character.len_utf8();
+    }
+
+    text[cursor..]
+        .char_indices()
+        .find(|(_, character)| character.is_whitespace())
+        .map(|(index, _)| cursor + index)
+        .unwrap_or(text.len())
 }
 
 fn whole_word_match_ranges(text: &str, query: &str) -> Vec<(usize, usize)> {

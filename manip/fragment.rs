@@ -226,7 +226,6 @@ fn bounded_coherent_text_window(
 }
 
 fn previous_text_boundary(text: &str, start: usize) -> usize {
-    let mut boundary = start;
     let mut cursor = start;
 
     while cursor > 0 {
@@ -239,7 +238,6 @@ fn previous_text_boundary(text: &str, start: usize) -> usize {
         }
 
         cursor = index;
-        boundary = index;
     }
 
     text[..cursor]

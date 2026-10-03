@@ -91,6 +91,7 @@ fn clean_xml_text(bytes: &[u8]) -> RecordResult<String> {
     let mut page_depth = 0usize;
     let mut wiki_text_depth = 0usize;
     let mut ignored_ref_depth = 0usize;
+    let mut generic_ignored_ref_depth = 0usize;
     let mut saw_xml_event = false;
     let mut saw_wiki_text = false;
 
@@ -111,6 +112,8 @@ fn clean_xml_text(bytes: &[u8]) -> RecordResult<String> {
                         ignored_ref_depth += 1;
                     }
                     append_projected_event_space(&mut wiki_text, &mut wiki_pending_space);
+                } else if name.eq_ignore_ascii_case("ref") {
+                    generic_ignored_ref_depth += 1;
                 } else if page_depth > 0
                     && name.eq_ignore_ascii_case("text")
                     && has_xml_space_preserve(event.attributes())
@@ -138,6 +141,10 @@ fn clean_xml_text(bytes: &[u8]) -> RecordResult<String> {
                     }
                 }
 
+                if name.eq_ignore_ascii_case("ref") && generic_ignored_ref_depth > 0 {
+                    generic_ignored_ref_depth -= 1;
+                }
+
                 if name.eq_ignore_ascii_case("page") && page_depth > 0 {
                     page_depth -= 1;
                 }
@@ -161,7 +168,9 @@ fn clean_xml_text(bytes: &[u8]) -> RecordResult<String> {
                 if wiki_text_depth > 0 && ignored_ref_depth == 0 {
                     append_clean_text(&mut wiki_text, &mut wiki_pending_space, value);
                 }
-                append_clean_text(&mut generic_text, &mut pending_space, value);
+                if generic_ignored_ref_depth == 0 {
+                    append_clean_text(&mut generic_text, &mut pending_space, value);
+                }
             }
             Event::CData(event) => {
                 saw_xml_event = true;
@@ -170,7 +179,9 @@ fn clean_xml_text(bytes: &[u8]) -> RecordResult<String> {
                 if wiki_text_depth > 0 && ignored_ref_depth == 0 {
                     append_clean_text(&mut wiki_text, &mut wiki_pending_space, value);
                 }
-                append_clean_text(&mut generic_text, &mut pending_space, value);
+                if generic_ignored_ref_depth == 0 {
+                    append_clean_text(&mut generic_text, &mut pending_space, value);
+                }
             }
             Event::GeneralRef(_) => {
                 saw_xml_event = true;

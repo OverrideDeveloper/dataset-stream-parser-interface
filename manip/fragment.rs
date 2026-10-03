@@ -74,14 +74,6 @@ fn validate_fragment_request(query: &str, max_bytes: usize) -> RecordResult<()> 
 
 /// Project XML into text suitable for lexical evidence extraction.
 ///
-/// Element markup, comments, declarations and processing instructions are
-/// discarded while text and CDATA are retained. <ref> elements are treated as
-/// source markup noise and their contents are discarded. MediaWiki-style
-/// constructs such as [[...]] and '''...''' remain text; template blocks are
-/// discarded as source markup noise. This engine deliberately does not attempt
-/// to interpret higher-level Wiki markup.
-/// Project XML into text suitable for lexical evidence extraction.
-///
 /// Wikipedia XML is handled as a special projection: when a text element with
 /// xml:space="preserve" occurs inside a page, only that payload is projected.
 /// This keeps page metadata from becoming part of the evidence search space.

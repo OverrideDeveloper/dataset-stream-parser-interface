@@ -94,7 +94,7 @@ fn clean_xml_text(bytes: &[u8]) -> RecordResult<String> {
 
         match reader.read_event_into(&mut buffer)? {
             Event::Start(event) => {
-                let name = String::from_utf8_lossy(event.name().as_ref());
+                let name = String::from_utf8_lossy(event.name().as_ref()).into_owned();
                 if name.eq_ignore_ascii_case("ref") {
                     ignored_ref_depth += 1;
                 }
@@ -103,14 +103,14 @@ fn clean_xml_text(bytes: &[u8]) -> RecordResult<String> {
                 }
             }
             Event::End(event) => {
-                let name = String::from_utf8_lossy(event.name().as_ref());
+                let name = String::from_utf8_lossy(event.name().as_ref()).into_owned();
                 if name.eq_ignore_ascii_case("ref") && ignored_ref_depth > 0 {
                     ignored_ref_depth -= 1;
                 }
                 pending_space = true;
             }
             Event::Empty(event) => {
-                let name = String::from_utf8_lossy(event.name().as_ref());
+                let name = String::from_utf8_lossy(event.name().as_ref()).into_owned();
                 if !name.eq_ignore_ascii_case("ref") && !text.is_empty() {
                     pending_space = true;
                 }

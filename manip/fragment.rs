@@ -1,4 +1,4 @@
-use crate::{record::bounded_text_window_around_match, DatasetRecord, RecordError, RecordResult};
+use crate::{DatasetRecord, RecordError, RecordResult};
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use serde::{Deserialize, Serialize};
@@ -77,8 +77,9 @@ fn validate_fragment_request(query: &str, max_bytes: usize) -> RecordResult<()> 
 /// Element markup, comments, declarations and processing instructions are
 /// discarded while text and CDATA are retained. <ref> elements are treated as
 /// source markup noise and their contents are discarded. MediaWiki-style
-/// constructs such as [[...]], '''...''', and {{...}} remain text; this engine
-/// deliberately does not attempt to interpret that higher-level markup.
+/// constructs such as [[...]] and '''...''' remain text; template blocks are
+/// discarded as source markup noise. This engine deliberately does not attempt
+/// to interpret higher-level Wiki markup.
 fn clean_xml_text(bytes: &[u8]) -> RecordResult<String> {
     let mut reader = Reader::from_reader(bytes);
     reader.config_mut().trim_text(false);
@@ -320,8 +321,7 @@ mod tests {
 
         assert!(small.record.contains("target"));
         assert!(large.record.contains("target"));
-        assert!(large.record.starts_with(&small.record[..small.record.find("target").unwrap()]));
-        assert!(large.record.find("target").unwrap() > 0);
+        assert!(large.record.contains(&small.record));
         assert!(large.record.len() >= small.record.len());
         assert_eq!(large.record.matches("target").count(), 1);
     }

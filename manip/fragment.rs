@@ -124,15 +124,9 @@ fn clean_xml_text(bytes: &[u8]) -> RecordResult<String> {
                     append_clean_text(&mut text, &mut pending_space, event.as_ref());
                 }
             }
-            Event::GeneralRef(event) => {
+            Event::GeneralRef(_) => {
                 if ignored_ref_depth == 0 {
-                    if pending_space && !text.is_empty() {
-                        text.push(' ');
-                    }
-                    pending_space = false;
-                    text.push('&');
-                    text.push_str(event.as_ref());
-                    text.push(';');
+                    pending_space = true;
                 }
             }
             Event::Eof => break,
@@ -140,7 +134,32 @@ fn clean_xml_text(bytes: &[u8]) -> RecordResult<String> {
         }
     }
 
-    Ok(text.trim().to_owned())
+    Ok(remove_template_blocks(text.trim()))
+}
+
+fn remove_template_blocks(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut index = 0usize;
+
+    while index < text.len() {
+        let remainder = &text[index..];
+
+        if remainder.starts_with("{{") {
+            if let Some(end) = remainder.find("}}") {
+                index += end + 2;
+                if !output.ends_with(char::is_whitespace) {
+                    output.push(' ');
+                }
+                continue;
+            }
+        }
+
+        let character = remainder.chars().next().unwrap();
+        output.push(character);
+        index += character.len_utf8();
+    }
+
+    output
 }
 
 fn append_clean_text(output: &mut String, pending_space: &mut bool, bytes: &[u8]) {
@@ -149,7 +168,7 @@ fn append_clean_text(output: &mut String, pending_space: &mut bool, bytes: &[u8]
         return;
     }
 
-    if *pending_space && !output.is_empty() && !value.starts_with(char::is_whitespace) {
+    if *pending_space && !output.is_empty() && value.chars().next().is_some_and(|character| !character.is_whitespace()) {
         output.push(' ');
     }
     *pending_space = false;
@@ -454,7 +473,7 @@ mod tests {
     fn clean_xml_text_keeps_entity_references_as_text() {
         let result = clean_xml_text(b"<text>Tom &amp; Jerry</text>").unwrap();
         assert!(result.contains("Tom"));
-        assert!(result.contains("&amp;"));
+        assert!(!result.contains("&amp;"));
         assert!(result.contains("Jerry"));
     }
 }

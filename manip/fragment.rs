@@ -147,7 +147,7 @@ fn remove_template_blocks(text: &str) -> String {
         if remainder.starts_with("{{") {
             if let Some(end) = remainder.find("}}") {
                 index += end + 2;
-                if !output.ends_with(char::is_whitespace) {
+                if !output.chars().last().is_some_and(|character| !character.is_whitespace()) {
                     output.push(' ');
                 }
                 continue;

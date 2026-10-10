@@ -44,6 +44,18 @@ The server is intentionally local-only by default.
 
 ## Endpoints
 
+### Discover the configured corpus
+
+    GET /local_data/corpus
+
+Response:
+
+    {
+      "corpus": "dblp"
+    }
+
+Returns the corpus name configured when the API process started. This endpoint does not require a corpus query parameter and works whether or not `--prep` was supplied. It identifies the configured corpus; use the readiness endpoint below to check whether preparation completed.
+
 ### Check readiness
 
     GET /local_data/status?corpus=dblp

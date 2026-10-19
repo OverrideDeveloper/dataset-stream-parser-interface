@@ -7,6 +7,7 @@ use url::Url;
 
 const SEARCH_PATH: &str = "/local_data/search";
 const STATUS_PATH: &str = "/local_data/status";
+const CORPUS_PATH: &str = "/local_data/corpus";
 const RECORD_PATH: &str = "/local_data";
 const FIND_EVIDENCE_PATH: &str = "/local_data/findevidence";
 const GET_EVIDENCE_PATH: &str = "/local_data/getevidence";
@@ -61,6 +62,11 @@ struct EvidenceRecordResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct CorpusResponse {
+    corpus: String,
+}
+
+#[derive(Debug, Serialize)]
 struct StatusResponse {
     corpus: String,
     prepared: bool,
@@ -107,12 +113,19 @@ impl<S: RecordSource> ApiState<S> {
     pub fn handle(&self, method: &str, request_url: &str, body: &[u8]) -> ApiResponse {
         match (method, request_url.split('?').next().unwrap_or(request_url)) {
             ("GET", STATUS_PATH) => self.handle_status(request_url),
+            ("GET", CORPUS_PATH) => self.handle_corpus(),
             ("POST", SEARCH_PATH) => self.handle_search(body),
             ("POST", FIND_EVIDENCE_PATH) => self.handle_find_evidence(body),
             ("GET", RECORD_PATH) => self.handle_record(request_url),
             ("GET", GET_EVIDENCE_PATH) => self.handle_get_evidence(request_url),
             _ => error_response(404, "not_found", "endpoint not found"),
         }
+    }
+
+    fn handle_corpus(&self) -> ApiResponse {
+        json_response(200, &CorpusResponse {
+            corpus: self.corpus.clone(),
+        })
     }
 
     fn handle_status(&self, request_url: &str) -> ApiResponse {
@@ -346,6 +359,27 @@ mod tests {
         });
         engine.prep().unwrap();
         ApiState::new("dblp", engine)
+    }
+
+    #[test]
+    fn corpus_endpoint_returns_configured_name_without_query_parameters() {
+        let response = state().handle("GET", "/local_data/corpus", &[]);
+        assert_eq!(response.status, 200);
+        let value: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(value["corpus"], "dblp");
+    }
+
+    #[test]
+    fn corpus_endpoint_reports_configured_name_for_non_wikipedia_corpus() {
+        let xml = br#"<pages><article><title>First</title></article></pages>"#.to_vec();
+        let engine = DatasetEngine::new(move || -> RecordResult<Box<dyn RecordStream>> {
+            Ok(Box::new(XmlRecordStream::new(Cursor::new(xml.clone()), XmlStreamConfig::new("article"))?))
+        });
+        let response = ApiState::new("my_documents", engine).handle(
+            "GET", "/local_data/corpus", &[]);
+        assert_eq!(response.status, 200);
+        let value: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(value["corpus"], "my_documents");
     }
 
     #[test]
